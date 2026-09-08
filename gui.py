@@ -1,0 +1,297 @@
+"""MultiAgentChat（LeetCode 解题小组版）Tkinter 桌面 GUI
+
+用可视化界面替代黑窗口：
+  - 顶部粘贴 LeetCode 题目（留空用默认题"两数之和"），开始 / 停止按钮
+  - 中部实时对话区：DeepSeek 与智谱按不同颜色/标签实时追加
+  - 底部左侧滚动摘要日志：每轮压缩成功后显示"第 N 轮已压缩入滚动摘要（xx 字）"与摘要正文
+  - 底部右侧最终总结区：结束时显示总结者「小马」的总结
+  - 非阻塞：讨论在后台线程跑（chat.run_discussion + hooks 回调），
+    通过 queue 把事件送回主线程，root.after 轮询刷新界面
+
+仅使用 Python 标准库（tkinter + threading + queue），不引入第三方依赖。
+启动方式：激活 .venv 后执行 python gui.py
+"""
+import queue
+import threading
+import time
+import tkinter as tk
+from tkinter import scrolledtext
+
+import config
+import chat as chat_mod
+
+# 与 chat.py __main__ 保持一致的参与者 / 总结者厂商配置
+PARTICIPANTS = [
+    ("DeepSeek", "deepseek"),      # 傲娇鱼 + 算法大神
+    ("智谱", "zhipu"),             # 腹黑绿茶 + 抬杠面试官
+]
+SUMMARIZER_PROVIDER = "deepseek"
+
+# 默认题目单一来源：直接复用 chat.py 的 DEFAULT_TOPIC，避免两份文案漂移
+DEFAULT_TOPIC = chat_mod.DEFAULT_TOPIC
+
+
+class MultiAgentGUI:
+    def __init__(self, root):
+        self.root = root
+        self.events = queue.Queue()      # 后台线程 -> UI 的事件队列
+        self.worker = None               # 当前讨论线程
+        self.stop_event = None           # 停止信号（threading.Event）
+        # 等待提示状态：正在等某角色 API 返回时非空
+        self._waiting = None             # (rnd, name) 当前正在等待的角色
+        self._waiting_since = None       # time.monotonic() 开始等待的时刻
+        self._last_shown_sec = -1        # 上次状态栏展示的等待秒数（避免无谓刷新）
+        self._build_ui()
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # 主线程轮询队列刷新界面（不阻塞 UI）
+        self.root.after(100, self._poll_queue)
+
+    # ---------- UI 构建 ----------
+    def _build_ui(self):
+        self.root.title("MultiAgentChat · LeetCode 解题小组")
+        self.root.geometry("1000x760")
+        self.root.minsize(860, 640)
+
+        # 顶部：题目输入
+        top = tk.LabelFrame(self.root, text=" 1. 粘贴要讨论的 LeetCode 题目（留空使用默认题：两数之和 LeetCode 1） ", padx=8, pady=6)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        self.topic_text = tk.Text(top, height=4, wrap="word", font=("Microsoft YaHei", 10))
+        self.topic_text.insert("1.0", DEFAULT_TOPIC)
+        self.topic_text.pack(fill="x")
+        ctrl = tk.Frame(top)
+        ctrl.pack(fill="x", pady=(6, 0))
+        self.start_btn = tk.Button(ctrl, text="开始讨论", width=12, command=self._start)
+        self.start_btn.pack(side="left")
+        self.stop_btn = tk.Button(ctrl, text="停止", width=10, command=self._stop, state="disabled")
+        self.stop_btn.pack(side="left", padx=6)
+        # 讨论轮数选择器：默认 5 轮，范围 1~10（滚动摘要下上下文不随轮数膨胀，可放心加轮）
+        tk.Label(ctrl, text="讨论轮数:", fg="#333333").pack(side="left", padx=(12, 2))
+        self.rounds_var = tk.IntVar(value=5)
+        tk.Spinbox(ctrl, from_=1, to=10, textvariable=self.rounds_var, width=3,
+                   justify="center").pack(side="left")
+        self.status_var = tk.StringVar(value="就绪：输入题目后点击「开始讨论」")
+        tk.Label(ctrl, textvariable=self.status_var, fg="#555555").pack(side="left", padx=8)
+
+        # 中部：实时对话区
+        mid = tk.LabelFrame(self.root, text=" 2. 实时对话 ", padx=6, pady=4)
+        mid.pack(fill="both", expand=True, padx=10, pady=4)
+        self.chat_text = scrolledtext.ScrolledText(
+            mid, wrap="word", state="disabled", font=("Microsoft YaHei", 10),
+            background="#fafafa", width=40, height=16,
+        )
+        self.chat_text.pack(fill="both", expand=True)
+        # 文本标签配色：DeepSeek 蓝 / 智谱 绿 / 系统灰 / 错误红
+        self.chat_text.tag_configure("meta", foreground="#999999")
+        self.chat_text.tag_configure("role_DeepSeek", foreground="#0b5394", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_text.tag_configure("role_智谱", foreground="#1e7a1e", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_text.tag_configure("role_other", foreground="#7f4f00", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_text.tag_configure("text", foreground="#222222")
+        self.chat_text.tag_configure("error", foreground="#c00000")
+        self.chat_text.tag_configure("system", foreground="#666666")
+
+        # 底部：滚动摘要日志 + 最终总结
+        bottom = tk.Frame(self.root)
+        bottom.pack(fill="both", padx=10, pady=(4, 10))
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        sum_frame = tk.LabelFrame(bottom, text=" 3. 滚动摘要日志（每轮压缩结果 + 摘要正文） ", padx=6, pady=4)
+        sum_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self.summary_text = scrolledtext.ScrolledText(
+            sum_frame, wrap="word", state="disabled", font=("Microsoft YaHei", 9),
+            background="#ffffff", width=40, height=12,
+        )
+        self.summary_text.pack(fill="both", expand=True)
+        self.summary_text.tag_configure("meta", foreground="#555555", font=("Microsoft YaHei", 9, "bold"))
+        self.summary_text.tag_configure("body", foreground="#1a1a1a")
+        self.summary_text.tag_configure("warn", foreground="#c00000")
+
+        fin_frame = tk.LabelFrame(bottom, text=" 4. 最终总结（主持人·小马） ", padx=6, pady=4)
+        fin_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self.final_text = scrolledtext.ScrolledText(
+            fin_frame, wrap="word", state="disabled", font=("Microsoft YaHei", 10),
+            background="#fffdf3", width=40, height=12,
+        )
+        self.final_text.pack(fill="both", expand=True)
+        self.final_text.tag_configure("title", foreground="#0b5394", font=("Microsoft YaHei", 10, "bold"))
+        self.final_text.tag_configure("body", foreground="#222222")
+
+    # ---------- 工具方法 ----------
+    def _append(self, widget, text, tag=None):
+        widget.config(state="normal")
+        widget.insert("end", text, tag)
+        widget.see("end")
+        widget.config(state="disabled")
+
+    def _append_chat_line(self, rnd, name, reply, failed, error):
+        """按角色配色向对话区追加一条发言"""
+        w = self.chat_text
+        w.config(state="normal")
+        w.insert("end", f"[第{rnd}轮] ", ("meta",))
+        role_tag = f"role_{name}" if f"role_{name}" in w.tag_names() else "role_other"
+        w.insert("end", f"{name}：", (role_tag,))
+        if failed:
+            # reply 本身已是"（…本轮发言失败，跳过）"占位句，不要再包一层括号
+            w.insert("end", f"{reply}\n", ("error",))
+            if error:
+                w.insert("end", f"    原因：{error}\n", ("error",))
+        else:
+            w.insert("end", f"{reply}\n", ("text",))
+        w.see("end")
+        w.config(state="disabled")
+
+    def _set_running(self, running):
+        self.start_btn.config(state="disabled" if running else "normal")
+        self.stop_btn.config(state="normal" if running else "disabled")
+        self.topic_text.config(state="disabled" if running else "normal")
+
+    def _clear_outputs(self):
+        for w in (self.chat_text, self.summary_text, self.final_text):
+            w.config(state="normal")
+            w.delete("1.0", "end")
+            w.config(state="disabled")
+
+    # ---------- 按钮行为 ----------
+    def _start(self):
+        topic = self.topic_text.get("1.0", "end").strip() or DEFAULT_TOPIC
+        try:
+            max_rounds = int(self.rounds_var.get())
+        except (tk.TclError, ValueError):
+            max_rounds = 5
+        max_rounds = max(1, min(max_rounds, 10))   # 兜底：限制 1~10
+        self._clear_outputs()
+        self._set_running(True)
+        self.status_var.set(f"讨论进行中…（共 {max_rounds} 轮，可在任意发言间隙点「停止」）")
+        self._append(self.chat_text, "系统：讨论开始，后台调用两家模型 API，界面实时刷新。\n", "system")
+        self.stop_event = threading.Event()
+        self.worker = threading.Thread(target=self._worker_run, args=(topic, max_rounds), daemon=True)
+        self.worker.start()
+
+    def _stop(self):
+        if self.stop_event is not None and not self.stop_event.is_set():
+            self.stop_event.set()
+            self.status_var.set("正在停止…（等待当前 API 调用返回后退出）")
+            self._clear_waiting()
+            self.stop_btn.config(state="disabled")
+
+    def _clear_waiting(self):
+        """清除等待提示状态（发言返回/摘要/总结/停止时调用）"""
+        self._waiting = None
+        self._waiting_since = None
+        self._last_shown_sec = -1
+
+    def _worker_run(self, topic, max_rounds):
+        """后台线程：跑 run_discussion，把事件经 hooks 塞进 queue"""
+        hooks = {
+            "on_start": lambda **kw: self.events.put({"type": "start", **kw}),
+            "on_round_start": lambda **kw: self.events.put({"type": "round", **kw}),
+            "on_speaker_start": lambda **kw: self.events.put({"type": "speaker_start", **kw}),
+            "on_speaker": lambda **kw: self.events.put({"type": "speaker", **kw}),
+            "on_summary": lambda **kw: self.events.put({"type": "summary", **kw}),
+            "on_finish": lambda **kw: self.events.put({"type": "finish", **kw}),
+            "on_warning": lambda **kw: self.events.put({"type": "warning", **kw}),
+        }
+        try:
+            # Key 校验失败会抛 SystemExit，捕获后展示给用户
+            config.check_config({prov for _, prov in PARTICIPANTS} | {SUMMARIZER_PROVIDER})
+            chat_mod.run_discussion(
+                topic=topic,
+                participant_names=PARTICIPANTS,
+                max_rounds=max_rounds,
+                summarizer_provider=SUMMARIZER_PROVIDER,
+                use_running_summary=True,
+                hooks=hooks,
+                stop_event=self.stop_event,
+                verbose=False,   # GUI 场景静默 stdout，结果全部走 hooks
+            )
+        except BaseException as e:   # noqa: BLE001 —— 线程内兜底，任何错误都展示到 UI
+            self.events.put({"type": "fatal", "message": f"{type(e).__name__}: {e}"})
+        else:
+            self.events.put({"type": "done", "stopped": bool(self.stop_event and self.stop_event.is_set())})
+
+    # ---------- 事件处理 ----------
+    def _poll_queue(self):
+        try:
+            while True:
+                msg = self.events.get_nowait()
+                self._handle(msg)
+        except queue.Empty:
+            pass
+        # 等待提示的秒数每秒刷新一次（不用每次都 set，避免无谓 UI 更新）
+        if self._waiting is not None and self._waiting_since is not None:
+            sec = int(time.monotonic() - self._waiting_since)
+            if sec != self._last_shown_sec:
+                self._last_shown_sec = sec
+                rnd, name = self._waiting
+                self.status_var.set(f"第{rnd}轮 {name} 思考中…（已等待 {sec} 秒）")
+        self.root.after(100, self._poll_queue)
+
+    def _handle(self, msg):
+        mtype = msg["type"]
+        if mtype == "start":
+            topic = (msg.get("topic") or "")[:120]
+            self._append(self.chat_text, f"系统：题目：{topic}…（完整题目见顶部输入框）\n", "system")
+        elif mtype == "round":
+            self._append(self.chat_text, f"———— 第 {msg['rnd']} 轮 ————\n", "meta")
+        elif mtype == "speaker_start":
+            # 某角色开始调用 API：状态栏显示"思考中 + 已等待秒数"，避免等待像卡死
+            self._clear_waiting()
+            self._waiting = (msg["rnd"], msg["name"])
+            self._waiting_since = time.monotonic()
+            self._last_shown_sec = -1
+            self.status_var.set(f"第{msg['rnd']}轮 {msg['name']} 思考中…")
+        elif mtype == "speaker":
+            self._clear_waiting()
+            self._append_chat_line(msg["rnd"], msg["name"], msg["reply"],
+                                   msg.get("failed", False), msg.get("error"))
+            if msg.get("failed"):
+                self.status_var.set(f"第{msg['rnd']}轮 {msg['name']} 发言失败，已跳过（详见对话区红色提示）")
+            else:
+                self.status_var.set("讨论进行中…（可在任意发言间隙点「停止」）")
+        elif mtype == "warning":
+            self._clear_waiting()
+            self._append(self.chat_text, f"警告：{msg['message']}\n", "error")
+            self._append(self.summary_text, f"警告：{msg['message']}\n", "warn")
+            self.status_var.set(f"警告：{msg['message']}")
+        elif mtype == "summary":
+            self._clear_waiting()
+            body = msg["summary_text"] or ""
+            self._append(self.summary_text,
+                         f"【第{msg['rnd']}轮】已压缩入滚动摘要（{len(body)} 字）\n", "meta")
+            self._append(self.summary_text, f"{body}\n", "body")
+            self._append(self.summary_text, "─" * 42 + "\n", "meta")
+            self.status_var.set(f"第{msg['rnd']}轮摘要已更新（{len(body)} 字），讨论继续…")
+        elif mtype == "finish":
+            self._clear_waiting()
+            self._append(self.final_text, "主持人 · 总结者「小马」\n", "title")
+            self._append(self.final_text, f"{msg['summary']}\n", "body")
+        elif mtype == "fatal":
+            self._clear_waiting()
+            self._append(self.chat_text, f"致命错误：{msg['message']}\n", "error")
+            self._set_running(False)
+            self.status_var.set("出错：见对话区红色提示")
+        elif mtype == "done":
+            self._clear_waiting()
+            self._set_running(False)
+            if msg.get("stopped"):
+                self._append(self.chat_text, "系统：讨论已手动停止，未生成最终总结。\n", "system")
+                self.status_var.set("已停止")
+            else:
+                self.status_var.set("讨论完成 ✓")
+
+    def _on_close(self):
+        # 后台线程是 daemon，随主进程退出即可；先尝试给个停止信号
+        if self.stop_event is not None:
+            self.stop_event.set()
+        self.root.destroy()
+
+
+def main():
+    root = tk.Tk()
+    MultiAgentGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

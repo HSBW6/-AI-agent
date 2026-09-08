@@ -11,6 +11,7 @@ MODEL = "deepseek-chat"          # 可换成 deepseek-reasoner 试试
 DEFAULT_TEMPERATURE = 0.8        # 越大越放飞，越小越稳定
 MAX_TRANSCRIPT_LEN = 4000        # 塞给模型的对话历史最大字数，防止越聊越贵
 MAX_TOKENS = 300                 # DeepSeek 单次回复 token 上限（deepseek-chat 不吐思考过程，够用）
+SUMMARIZER_MAX_TOKENS = 1500     # 总结者「小马」单次回复上限：最终要输出总结 + 完整代码，300 不够用
 
 # ---- 第二个模型：智谱 GLM ----
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")

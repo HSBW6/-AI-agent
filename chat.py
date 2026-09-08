@@ -2,10 +2,18 @@
 import config
 from agent import Agent
 
+# 默认题目（单一来源：chat.py 与 gui.py 共用，避免两份文案各自漂移）
+DEFAULT_TOPIC = (
+    "题目：两数之和（LeetCode 1）。给定一个整数数组 nums 和一个整数目标值 target，"
+    "请你在该数组中找出和为目标值 target 的那两个整数，并返回它们的数组下标。"
+    "请只讨论思路与复杂度，先不要写完整代码（最后主持人小马会统一给出可运行代码）。"
+)
+
 
 def run_discussion(
     topic, participant_names, max_rounds=3, summarizer_provider="deepseek",
     use_running_summary=True, summary_max_len=500,
+    hooks=None, stop_event=None, verbose=True,
 ):
     """让参与者围绕话题轮流发言，最后总结者收尾。
 
@@ -21,15 +29,40 @@ def run_discussion(
                            False = 经典模式：每次都喂全部历史（对照实验用）
       summary_max_len      滚动摘要目标长度（字符）。把它控制小，
                            摘要就永远远小于 MAX_TRANSCRIPT_LEN，不会触发兜底裁剪
+      hooks               可选回调 dict（供 GUI 逐步取结果），支持：
+                           on_start(topic, participant_names)
+                           on_round_start(rnd)
+                           on_speaker_start(rnd, name)   # 某角色开始调 API（等待提示用）
+                           on_speaker(rnd, name, reply, failed, error)
+                           on_summary(rnd, summary_text)
+                           on_finish(summary)
+                           on_warning(message)
+                           任一键缺省即不回调；回调抛异常不影响讨论流程。
+      stop_event          可选 threading.Event：置位后在下一个检查点停止讨论
+      verbose             True=照常打印全部过程输出（CLI 默认，与旧版完全一致）；
+                          False=静默，仅通过 hooks 回调取结果（GUI 场景）
     """
+    # GUI 复用接口（见 docstring hooks）：事件回调 + 输出开关
+    def _out(*args, **kwargs):
+        if verbose:
+            print(*args, **kwargs)
+
+    def _emit(event, **payload):
+        if hooks and callable(hooks.get(event)):
+            try:
+                hooks[event](**payload)
+            except Exception as e:   # GUI 回调异常不拖垮讨论流程
+                _out(f"[警告] GUI 回调 {event} 异常：{e}")
+
     # 1. 开场：话题行是整场讨论的锚点（坑②：摘要绝不能吞掉话题）
     #    第 1 轮它以原始行在场；从第 1 轮压缩起，话题由摘要指令强制保留在摘要开头
     opening_line = f"话题：{topic}\n请大家围绕这个话题开始讨论。"
-    print("=" * 60)
-    print("话题:", topic)
-    print("参与者:", "、".join(name for name, _ in participant_names))
-    print("RunningSummary:", "开" if use_running_summary else "关")
-    print("=" * 60)
+    _out("=" * 60)
+    _out("话题:", topic)
+    _out("参与者:", "、".join(name for name, _ in participant_names))
+    _out("RunningSummary:", "开" if use_running_summary else "关")
+    _out("=" * 60)
+    _emit("on_start", topic=topic, participant_names=participant_names)
 
     # 2. 建 Agent：参与者 + 总结者 + 记录员（默认用 DeepSeek）
     agents = [Agent(name, provider=prov) for name, prov in participant_names]
@@ -45,20 +78,33 @@ def run_discussion(
     # 话题锚点从第 2 轮起只存在于摘要开头（由 update_summary 指令强制保留）
     recent_lines = [opening_line]
 
-    # 4. 主循环：每轮每人发言一次
+    # 4. 主循环：每轮每人发言一次（GUI 场景可通过 stop_event 在检查点停止）
+    stopped = False
     for rnd in range(1, max_rounds + 1):
-        print(f"\n----- 第 {rnd} 轮 -----")
+        if stop_event is not None and stop_event.is_set():
+            stopped = True
+            break
+        _out(f"\n----- 第 {rnd} 轮 -----")
+        _emit("on_round_start", rnd=rnd)
         round_lines = []  # 收集本轮原始发言，轮末用于更新摘要
         for agent in agents:
+            if stop_event is not None and stop_event.is_set():
+                stopped = True
+                break
             # 4.1 组装本轮上下文：摘要 + 最近对话
             #     参与者的 prompt 会看到"摘要+最近对话"，让模型知道自己在读摘要
             context = transcript_text(summary_text, recent_lines)
             failed = False
+            error = None
+            # 通知 UI"即将调用 XX 的 API"：GUI 可借此显示"思考中…"等待提示
+            # （智谱免费档服务端波动大，实测单次可等 10~20s，无提示会像卡死）
+            _emit("on_speaker_start", rnd=rnd, name=agent.name)
             try:
                 reply = agent.say(context)
             except Exception as e:
                 # 单个角色失败（限流/网络等）不拖垮整场讨论：记录后继续
-                print(f"[警告] {agent.name} 发言失败：{type(e).__name__}: {e}")
+                error = f"{type(e).__name__}: {e}"
+                _out(f"[警告] {agent.name} 发言失败：{error}")
                 reply = f"（{agent.name} 本轮发言失败，跳过）"
                 failed = True
             reply = clean_reply(reply, agent.name)
@@ -70,8 +116,12 @@ def run_discussion(
             recent_lines.append(line)
             if not failed:
                 round_lines.append(line)   # 失败占位句不压进摘要，避免污染记忆
-            print(line)
-            print()
+            _out(line)
+            _out()
+            _emit("on_speaker", rnd=rnd, name=agent.name, reply=reply,
+                  failed=failed, error=error)
+        if stopped:
+            break
 
         # 4.2 每轮末尾：把"旧摘要 + 本轮发言"压缩成一条新滚动摘要
         #     （坑①：这是额外一次 API 调用，每轮 +1 成本，换取上下文不再线性膨胀）
@@ -79,28 +129,44 @@ def run_discussion(
         if use_running_summary and rnd < max_rounds:
             new_summary = update_summary(
                 recorder, topic, summary_text, round_lines,
-                rnd, summary_max_len,
+                rnd, summary_max_len, verbose,
             )
             if new_summary is not None:
                 # 摘要更新成功：本轮原文并入摘要，清空 recent_lines
                 summary_text = new_summary
                 recent_lines = []
-                print(f"[摘要] 第 {rnd} 轮已压缩入滚动摘要（{len(new_summary)} 字）")
+                _out(f"[摘要] 第 {rnd} 轮已压缩入滚动摘要（{len(new_summary)} 字）")
+                _emit("on_summary", rnd=rnd, summary_text=new_summary)
+            else:
+                _emit("on_warning", message=f"第 {rnd} 轮滚动摘要更新失败，沿用旧摘要")
+
+    if stopped:
+        _out("\n[已停止] 讨论已被手动停止")
+        return None
 
     # 5. 总结收尾：基于"最终摘要 + 最后最近对话"做最终总结
-    print("----- 总结 -----")
+    _out("----- 总结 -----")
     try:
         summary = summarizer.say(
             transcript_text(summary_text, recent_lines),
-            extra_instruction="讨论到此结束，请作为主持人输出你的总结。",
+            extra_instruction=(
+                "讨论到此结束，请作为主持人输出最终总结："
+                "先用分条列表简要总结讨论要点，"
+                "再根据上面的讨论给出这道题的具体可运行代码"
+                "（Python，用代码块输出，代码要完整、含注释、可直接运行）。"
+            ),
+            max_tokens=config.SUMMARIZER_MAX_TOKENS,
         )
     except Exception as e:
-        print(f"[警告] 总结失败：{type(e).__name__}: {e}")
+        _out(f"[警告] 总结失败：{type(e).__name__}: {e}")
+        _emit("on_warning", message=f"总结失败：{type(e).__name__}: {e}")
         summary = "（总结失败，请查看上方警告信息）"
-    print(f"总结者：{summary}")
+    _out(f"总结者：{summary}")
+    _emit("on_finish", summary=summary)
+    return summary
 
 
-def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len):
+def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len, verbose=True):
     """把【旧摘要】+【本轮新增发言】合并成一条更短的滚动摘要。
 
     设计取舍（坑①）：这是每轮额外的一次 API 调用，轮数越多成本越高；
@@ -131,7 +197,8 @@ def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len):
     try:
         return recorder.say(head + body, extra_instruction=instruction).strip()
     except Exception as e:
-        print(f"[警告] 第 {rnd} 轮滚动摘要更新失败：{type(e).__name__}: {e}，沿用旧摘要")
+        if verbose:
+            print(f"[警告] 第 {rnd} 轮滚动摘要更新失败：{type(e).__name__}: {e}，沿用旧摘要")
         return None
 
 
@@ -200,19 +267,14 @@ if __name__ == "__main__":
     used_providers = {prov for _, prov in participants} | {summarizer_provider}
     config.check_config(used_providers)
 
-    # 让用户粘贴要讨论的 LeetCode 题目：直接回车则回退到默认题
+    # 让用户粘贴要讨论的 LeetCode 题目：直接回车则回退到默认题（DEFAULT_TOPIC）
     # 没有交互终端（管道/重定向/自动化运行）时 input() 会抛 EOFError，回退默认题不崩
-    default_topic = (
-        "题目：两数之和（LeetCode 1）。给定一个整数数组 nums 和一个整数目标值 target，"
-        "请你在该数组中找出和为目标值 target 的那两个整数，并返回它们的数组下标。"
-        "只讨论思路与复杂度，不用把完整代码写出来。"
-    )
     try:
         topic = input("粘贴要讨论的 LeetCode 题目（直接回车使用默认题）：").strip()
     except EOFError:
         topic = ""
     if not topic:
-        topic = default_topic
+        topic = DEFAULT_TOPIC
 
     run_discussion(
         topic=topic,
