@@ -23,30 +23,39 @@ class FakeAgent:
 
     记录每次 say 收到的 (角色名, transcript) 到类级 history，
     供测试断言"某角色（如记录员）到底看到了什么输入"。
+    reply 不为 None 时固定返回该文本（用于模拟总结者输出含代码块的总结，
+    配合评测闭环 verify_code=True 测试 on_verification 事件）。
     """
     last_input = None
     history = []
 
-    def __init__(self, name, provider="deepseek"):
+    def __init__(self, name, provider="deepseek", reply=None):
         self.name = name
         self.provider = provider
         self.fail = False
+        self.reply = reply
 
     def say(self, transcript_text, extra_instruction="", max_tokens=None):
         FakeAgent.last_input = transcript_text
         FakeAgent.history.append((self.name, transcript_text))
         if self.fail:
             raise RuntimeError("模拟 API 故障")
+        if self.reply is not None:
+            return self.reply
         return f"我是{self.name}的发言"
 
 
-def use_fake_agents(testcase, fail_names=()):
-    """把 chat.Agent 换成假工厂；测试结束自动还原"""
+def use_fake_agents(testcase, fail_names=(), reply_map=None):
+    """把 chat.Agent 换成假工厂；测试结束自动还原
+
+    reply_map: 角色名 -> 固定回复文本（按 name 匹配，模拟总结代码等场景）
+    """
     original = chat.Agent
     FakeAgent.history = []   # 每个用例从干净历史开始
+    reply_map = reply_map or {}
 
     def factory(name, provider="deepseek"):
-        agent = FakeAgent(name, provider)
+        agent = FakeAgent(name, provider, reply=reply_map.get(name))
         if name in fail_names:
             agent.fail = True
         return agent
@@ -224,6 +233,109 @@ class CleanReplyTest(unittest.TestCase):
     def test_empty_safe(self):
         self.assertEqual(chat.clean_reply(None, "A"), "")
         self.assertEqual(chat.clean_reply("", "A"), "")
+
+
+class RunDiscussionVerificationTest(unittest.TestCase):
+    """评测闭环集成：verify_code=True 时总结后触发 on_verification 事件
+
+    verify_code 默认 False（不改变旧事件序列/返回值契约），仅在显式开启时
+    增加 on_verification——本组测试全部显式开启。
+    """
+
+    GOOD_CODE = (
+        "def two_sum(nums, target):\n"
+        "    seen = {}\n"
+        "    for i, v in enumerate(nums):\n"
+        "        if target - v in seen:\n"
+        "            return [seen[target - v], i]\n"
+        "        seen[v] = i\n"
+    )
+
+    WRONG_CODE = (
+        "def two_sum(nums, target):\n"
+        "    for i in range(len(nums)):\n"
+        "        if nums[i] * 2 == target:\n"
+        "            return [i, i]\n"
+        "    return [0, 1]\n"
+    )
+
+    def _hooks(self):
+        rec = EventRecorder()
+        hooks = rec.all_hooks()
+        hooks["on_verification"] = rec.hook("on_verification")
+        return rec, hooks
+
+    def test_verify_passed_emits_hook_after_finish(self):
+        reply = "要点……\n\n```python\n" + self.GOOD_CODE + "\n```\n"
+        use_fake_agents(self, reply_map={"总结者": reply})
+        rec, hooks = self._hooks()
+        result = chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=1,
+            use_running_summary=False, verbose=False, hooks=hooks,
+            verify_code=True)
+        self.assertEqual(result, reply)          # 返回值契约不变：仍是总结 str
+        seq = rec.types()
+        self.assertIn("on_finish", seq)
+        self.assertIn("on_verification", seq)
+        self.assertGreater(seq.index("on_verification"), seq.index("on_finish"))
+        v = next(kw for t, kw in rec.events if t == "on_verification")
+        self.assertTrue(v["passed"])
+        self.assertEqual(v["status"], "pass")
+        self.assertEqual(len(v["tests"]), 6)     # 两数之和默认 6 个用例
+        self.assertTrue(all(t["passed"] for t in v["tests"]))
+        self.assertIn("两数之和", v["suite_label"])
+
+    def test_verify_failed_reports_failing_case(self):
+        reply = "```python\n" + self.WRONG_CODE + "\n```\n"
+        use_fake_agents(self, reply_map={"总结者": reply})
+        rec, hooks = self._hooks()
+        chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=1,
+            use_running_summary=False, verbose=False, hooks=hooks,
+            verify_code=True)
+        v = next(kw for t, kw in rec.events if t == "on_verification")
+        self.assertFalse(v["passed"])
+        self.assertEqual(v["status"], "fail")
+        failed = [t for t in v["tests"] if not t["passed"]]
+        self.assertTrue(failed)                   # 至少一个用例失败
+        # 失败原因应可追溯（同一元素用两次 / 值之和不符）
+        detail = " ".join(t["detail"] for t in failed)
+        self.assertTrue(detail)
+
+    def test_verify_no_code_emits_error(self):
+        use_fake_agents(self, reply_map={"总结者": "纯文字总结，没有代码块"})
+        rec, hooks = self._hooks()
+        chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=1,
+            use_running_summary=False, verbose=False, hooks=hooks,
+            verify_code=True)
+        v = next(kw for t, kw in rec.events if t == "on_verification")
+        self.assertFalse(v["passed"])
+        self.assertEqual(v["status"], "no_code")
+        self.assertIn("未找到", v["error"])
+
+    def test_verify_off_by_default_keeps_old_sequence(self):
+        """verify_code 默认 False：不产生 on_verification，旧行为完全不变"""
+        use_fake_agents(self)
+        rec = EventRecorder()
+        chat.run_discussion(topic="题", participant_names=PARTICIPANTS,
+                            max_rounds=1, use_running_summary=False,
+                            verbose=False, hooks=rec.all_hooks())
+        self.assertNotIn("on_verification", rec.types())
+        self.assertIn("on_finish", rec.types())
+
+    def test_verify_verbose_cli_prints_pass_line(self):
+        reply = "```python\n" + self.GOOD_CODE + "\n```\n"
+        use_fake_agents(self, reply_map={"总结者": reply})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            chat.run_discussion(topic="题", participant_names=PARTICIPANTS,
+                                max_rounds=1, use_running_summary=False,
+                                verbose=True, hooks=None, verify_code=True)
+        out = buf.getvalue()
+        self.assertIn("代码验证", out)
+        self.assertIn("✓", out)
+        self.assertIn("6/6", out)
 
 
 if __name__ == "__main__":

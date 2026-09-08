@@ -1,6 +1,7 @@
-"""Multi-Agent 互聊主程序：不同模型的两个角色轮流发言 + 总结收尾"""
+"""Multi-Agent 互聊主程序：不同模型的两个角色轮流发言 + 总结收尾 + 代码评测闭环"""
 import config
 from agent import Agent
+from evaluation import DEFAULT_SUITE, format_verification, run_code_verification
 
 # 默认题目（单一来源：chat.py 与 gui.py 共用，避免两份文案各自漂移）
 DEFAULT_TOPIC = (
@@ -9,19 +10,48 @@ DEFAULT_TOPIC = (
     "请只讨论思路与复杂度，先不要写完整代码（最后主持人小马会统一给出可运行代码）。"
 )
 
+# 默认参与者阵容（单一来源：chat.py __main__ 与 gui.py 共用）。
+# 角色名必须命中 personas.py 的人设键（agent.config_persona 按名字取人设），
+# 要换参赛角色/厂商只改这一处。
+DEFAULT_PARTICIPANTS = [
+    ("DeepSeek", "deepseek"),      # 傲娇鱼 + 算法大神
+    ("智谱", "zhipu"),             # 腹黑绿茶 + 抬杠面试官
+]
+DEFAULT_SUMMARIZER_PROVIDER = "deepseek"   # 总结者用的厂商；改这里即可（可换 "zhipu"）
+
+# hooks 事件名完整清单（单一来源：run_discussion 文档与 gui.py 注册均以此为准）
+HOOK_EVENT_NAMES = (
+    "on_start",
+    "on_round_start",
+    "on_speaker_start",
+    "on_speaker",
+    "on_summary",
+    "on_finish",
+    "on_warning",
+    "on_verification",
+)
+
+
+def providers_in_use(participants, summarizer_provider):
+    """计算本次运行实际用到的厂商集合（给 config.check_config 校验 Key）"""
+    return {prov for _, prov in participants} | {summarizer_provider}
+
 
 def run_discussion(
-    topic, participant_names, max_rounds=3, summarizer_provider="deepseek",
+    topic, participant_names, max_rounds=config.DEFAULT_MAX_ROUNDS,
+    summarizer_provider=DEFAULT_SUMMARIZER_PROVIDER,
     use_running_summary=True, summary_max_len=500,
     hooks=None, stop_event=None, verbose=True,
+    verify_code=False, verify_suite=DEFAULT_SUITE,
 ):
     """让参与者围绕话题轮流发言，最后总结者收尾。
 
     参数说明：
       topic                话题描述（str）
       participant_names    参与者列表，每项是 (角色名, provider)
-      max_rounds           每人发言几轮，默认 3 轮
-      summarizer_provider  总结者/摘要者用的厂商，默认 "deepseek"
+      max_rounds           每人发言几轮，默认 config.DEFAULT_MAX_ROUNDS（CLI=3）
+      summarizer_provider  总结者/摘要者用的厂商，默认 DEFAULT_SUMMARIZER_PROVIDER
+                           （chat.py 模块常量，"deepseek"，可改 "zhipu"）
       use_running_summary  是否启用 RunningSummary（滚动摘要）：
                            True  = 每轮结束后把"旧摘要+本轮发言"压缩成新摘要，
                                    下一轮参与者只看 摘要+最近对话
@@ -29,7 +59,8 @@ def run_discussion(
                            False = 经典模式：每次都喂全部历史（对照实验用）
       summary_max_len      滚动摘要目标长度（字符）。把它控制小，
                            摘要就永远远小于 MAX_TRANSCRIPT_LEN，不会触发兜底裁剪
-      hooks               可选回调 dict（供 GUI 逐步取结果），支持：
+      hooks               可选回调 dict（供 GUI 逐步取结果），支持的事件键：
+                           HOOK_EVENT_NAMES（chat.py 模块级单一来源）——
                            on_start(topic, participant_names)
                            on_round_start(rnd)
                            on_speaker_start(rnd, name)   # 某角色开始调 API（等待提示用）
@@ -37,10 +68,19 @@ def run_discussion(
                            on_summary(rnd, summary_text)
                            on_finish(summary)
                            on_warning(message)
+                           on_verification(passed, status, tests, error, code, suite_label)
+                                 # 评测闭环结果（仅 verify_code=True 时在 on_finish 后触发）
                            任一键缺省即不回调；回调抛异常不影响讨论流程。
       stop_event          可选 threading.Event：置位后在下一个检查点停止讨论
       verbose             True=照常打印全部过程输出（CLI 默认，与旧版完全一致）；
                           False=静默，仅通过 hooks 回调取结果（GUI 场景）
+      verify_code         True=总结完成后把总结里的 ```python 代码块放进受限沙箱
+                          执行并跑题目用例断言（评测闭环），结果经
+                          on_verification 回调 + verbose 打印，不影响返回值；
+                          False=不做验证（默认，保证旧行为/旧事件序列不变）
+      verify_suite        题目用例套件名（evaluation.TEST_SUITES 的 key），
+                          默认 evaluation.DEFAULT_SUITE（"two_sum"），
+                          新题目在 evaluation.py 扩展
     """
     # GUI 复用接口（见 docstring hooks）：事件回调 + 输出开关
     def _out(*args, **kwargs):
@@ -163,6 +203,31 @@ def run_discussion(
         summary = "（总结失败，请查看上方警告信息）"
     _out(f"总结者：{summary}")
     _emit("on_finish", summary=summary)
+
+    # 6.（评测闭环 · 交接文档 §10.3-1）总结者输出的代码不再"自嗨"：
+    #    解析 ```python 代码块 → 受限沙箱子进程执行 → 跑题目用例断言 →
+    #    CLI/GUI 展示"代码验证 ✓/✗"。默认关闭，仅 CLI/GUI 入口显式开启，
+    #    不改变 run_discussion 默认事件序列与返回值契约（str）。
+    if verify_code:
+        try:
+            verification = run_code_verification(summary, suite_name=verify_suite)
+            _out("----- 代码验证（评测闭环） -----")
+            _out(format_verification(verification))
+            _emit(
+                "on_verification",
+                passed=verification.passed,
+                status=verification.status,
+                tests=[
+                    {"name": t.name, "passed": t.passed, "detail": t.detail}
+                    for t in verification.tests
+                ],
+                error=verification.error,
+                code=verification.code,
+                suite_label=verification.suite_label,
+            )
+        except Exception as e:   # 评测失败绝不能拖垮已经完成的讨论/总结
+            _out(f"[警告] 代码验证过程异常：{type(e).__name__}: {e}")
+            _emit("on_warning", message=f"代码验证过程异常：{type(e).__name__}: {e}")
     return summary
 
 
@@ -254,18 +319,16 @@ def clean_reply(reply, name):
 
 
 if __name__ == "__main__":
-    # 【解题小组模式·融合版】傲娇鱼学霸 vs 绿茶面试官，总结者小马收尾
-    # participants 保持原来的两个角色名（人设已在 personas.py 里融合了讲题/抬杠职能）
-    participants = [
-        ("DeepSeek", "deepseek"),      # 傲娇鱼 + 算法大神
-        ("智谱", "zhipu"),             # 腹黑绿茶 + 抬杠面试官
-    ]
-    summarizer_provider = "deepseek"   # 总结者用的厂商；改成 "zhipu" 时下面一行同步改
+    # 【解题小组模式·融合版】傲娇鱼学霸 vs 绿茶面试官，总结者小马收尾。
+    # 参与者阵容 / 总结者厂商 / 轮数默认值均收敛为模块级单一来源
+    # （DEFAULT_PARTICIPANTS / DEFAULT_SUMMARIZER_PROVIDER / config.DEFAULT_MAX_ROUNDS），
+    # 人设已在 personas.py 里融合了讲题/抬杠职能。
+    participants = DEFAULT_PARTICIPANTS
+    summarizer_provider = DEFAULT_SUMMARIZER_PROVIDER
 
     # 启动前只校验实际用到的厂商 Key（参与者 + 总结者），
     # 只填了一家 Key 也能跑，不再强制两家都填
-    used_providers = {prov for _, prov in participants} | {summarizer_provider}
-    config.check_config(used_providers)
+    config.check_config(providers_in_use(participants, summarizer_provider))
 
     # 让用户粘贴要讨论的 LeetCode 题目：直接回车则回退到默认题（DEFAULT_TOPIC）
     # 没有交互终端（管道/重定向/自动化运行）时 input() 会抛 EOFError，回退默认题不崩
@@ -279,7 +342,7 @@ if __name__ == "__main__":
     run_discussion(
         topic=topic,
         participant_names=participants,
-        max_rounds=3,
         summarizer_provider=summarizer_provider,
         use_running_summary=True,  # True=滚动摘要(省token但每轮+1次API) / False=全量历史(对照)
+        verify_code=True,          # 评测闭环：总结后沙箱执行代码并跑题目用例断言
     )

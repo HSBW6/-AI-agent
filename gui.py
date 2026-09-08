@@ -20,15 +20,13 @@ from tkinter import scrolledtext
 import config
 import chat as chat_mod
 
-# 与 chat.py __main__ 保持一致的参与者 / 总结者厂商配置
-PARTICIPANTS = [
-    ("DeepSeek", "deepseek"),      # 傲娇鱼 + 算法大神
-    ("智谱", "zhipu"),             # 腹黑绿茶 + 抬杠面试官
-]
-SUMMARIZER_PROVIDER = "deepseek"
-
 # 默认题目单一来源：直接复用 chat.py 的 DEFAULT_TOPIC，避免两份文案漂移
 DEFAULT_TOPIC = chat_mod.DEFAULT_TOPIC
+# 参与者阵容 / 总结者厂商 / hooks 事件名清单：单一来源在 chat.py（DEFAULT_PARTICIPANTS /
+# DEFAULT_SUMMARIZER_PROVIDER / HOOK_EVENT_NAMES），GUI 只 import 不重抄，防止双份漂移。
+PARTICIPANTS = chat_mod.DEFAULT_PARTICIPANTS
+SUMMARIZER_PROVIDER = chat_mod.DEFAULT_SUMMARIZER_PROVIDER
+HOOK_EVENT_NAMES = chat_mod.HOOK_EVENT_NAMES
 
 
 class MultiAgentGUI:
@@ -53,7 +51,9 @@ class MultiAgentGUI:
         self.root.minsize(860, 640)
 
         # 顶部：题目输入
-        top = tk.LabelFrame(self.root, text=" 1. 粘贴要讨论的 LeetCode 题目（留空使用默认题：两数之和 LeetCode 1） ", padx=8, pady=6)
+        top = tk.LabelFrame(self.root,
+                            text=" 1. 粘贴要讨论的 LeetCode 题目（留空使用默认题，见下方预填内容） ",
+                            padx=8, pady=6)
         top.pack(fill="x", padx=10, pady=(10, 4))
         self.topic_text = tk.Text(top, height=4, wrap="word", font=("Microsoft YaHei", 10))
         self.topic_text.insert("1.0", DEFAULT_TOPIC)
@@ -64,10 +64,11 @@ class MultiAgentGUI:
         self.start_btn.pack(side="left")
         self.stop_btn = tk.Button(ctrl, text="停止", width=10, command=self._stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
-        # 讨论轮数选择器：默认 5 轮，范围 1~10（滚动摘要下上下文不随轮数膨胀，可放心加轮）
+        # 讨论轮数选择器：默认值 / 范围来自 config.py 集中常量（改默认轮数只改 config.py 一处）
         tk.Label(ctrl, text="讨论轮数:", fg="#333333").pack(side="left", padx=(12, 2))
-        self.rounds_var = tk.IntVar(value=5)
-        tk.Spinbox(ctrl, from_=1, to=10, textvariable=self.rounds_var, width=3,
+        self.rounds_var = tk.IntVar(value=config.GUI_DEFAULT_MAX_ROUNDS)
+        tk.Spinbox(ctrl, from_=config.GUI_ROUNDS_MIN, to=config.GUI_ROUNDS_MAX,
+                   textvariable=self.rounds_var, width=3,
                    justify="center").pack(side="left")
         self.status_var = tk.StringVar(value="就绪：输入题目后点击「开始讨论」")
         tk.Label(ctrl, textvariable=self.status_var, fg="#555555").pack(side="left", padx=8)
@@ -116,6 +117,11 @@ class MultiAgentGUI:
         self.final_text.pack(fill="both", expand=True)
         self.final_text.tag_configure("title", foreground="#0b5394", font=("Microsoft YaHei", 10, "bold"))
         self.final_text.tag_configure("body", foreground="#222222")
+        self.final_text.tag_configure("meta", foreground="#999999")
+        # 评测闭环（代码验证 ✓/✗）配色：通过与失败醒目区分
+        self.final_text.tag_configure("verify_ok", foreground="#1e7a1e", font=("Microsoft YaHei", 10, "bold"))
+        self.final_text.tag_configure("verify_fail", foreground="#c00000", font=("Microsoft YaHei", 10, "bold"))
+        self.final_text.tag_configure("verify_detail", foreground="#8a3c00", font=("Consolas", 9))
 
     # ---------- 工具方法 ----------
     def _append(self, widget, text, tag=None):
@@ -152,14 +158,45 @@ class MultiAgentGUI:
             w.delete("1.0", "end")
             w.config(state="disabled")
 
+    def _render_verification(self, msg):
+        """在最终总结区渲染代码验证结论（评测闭环）：✓ 绿 / ✗ 红 + 失败详情"""
+        label = msg.get("suite_label") or "代码"
+        status = msg.get("status")
+        error = msg.get("error") or "验证失败"
+        tests = msg.get("tests") or []
+        passed_n = sum(1 for t in tests if t.get("passed"))
+        total = len(tests)
+        sep = "─" * 42 + "\n"
+        if status == "pass":
+            self._append(self.final_text, sep, "meta")
+            self._append(self.final_text,
+                         f"[代码验证 ✓] {label}：{total}/{total} 用例通过\n", "verify_ok")
+        elif status == "fail":
+            self._append(self.final_text, sep, "meta")
+            self._append(self.final_text,
+                         f"[代码验证 ✗] {label}：通过 {passed_n}/{total}，失败 {total - passed_n} 个用例\n",
+                         "verify_fail")
+            for t in tests:
+                if not t.get("passed"):
+                    self._append(self.final_text,
+                                 f"  ·「{t.get('name')}」{t.get('detail') or '断言失败'}\n",
+                                 "verify_detail")
+        else:
+            # no_code / error / timeout：直接展示原因
+            self._append(self.final_text, sep, "meta")
+            self._append(self.final_text, f"[代码验证 ✗] {label}：{error}\n", "verify_fail")
+        self.status_var.set(f"代码验证 {'通过 ✓' if status == 'pass' else '未通过 ✗'}（评测闭环）")
+
     # ---------- 按钮行为 ----------
     def _start(self):
         topic = self.topic_text.get("1.0", "end").strip() or DEFAULT_TOPIC
         try:
             max_rounds = int(self.rounds_var.get())
         except (tk.TclError, ValueError):
-            max_rounds = 5
-        max_rounds = max(1, min(max_rounds, 10))   # 兜底：限制 1~10
+            max_rounds = config.GUI_DEFAULT_MAX_ROUNDS
+        # 兜底 clamp：边界与 Spinbox 同源（config.GUI_ROUNDS_MIN/MAX），防手输越界
+        max_rounds = max(config.GUI_ROUNDS_MIN,
+                         min(max_rounds, config.GUI_ROUNDS_MAX))
         self._clear_outputs()
         self._set_running(True)
         self.status_var.set(f"讨论进行中…（共 {max_rounds} 轮，可在任意发言间隙点「停止」）")
@@ -190,11 +227,18 @@ class MultiAgentGUI:
             "on_speaker": lambda **kw: self.events.put({"type": "speaker", **kw}),
             "on_summary": lambda **kw: self.events.put({"type": "summary", **kw}),
             "on_finish": lambda **kw: self.events.put({"type": "finish", **kw}),
+            "on_verification": lambda **kw: self.events.put({"type": "verification", **kw}),
             "on_warning": lambda **kw: self.events.put({"type": "warning", **kw}),
         }
         try:
-            # Key 校验失败会抛 SystemExit，捕获后展示给用户
-            config.check_config({prov for _, prov in PARTICIPANTS} | {SUMMARIZER_PROVIDER})
+            # 防漂移闸门：chat.py 新增 hooks 事件而 GUI 忘注册时，启动即报错而不是静默漏事件
+            missing = [ev for ev in HOOK_EVENT_NAMES if ev not in hooks]
+            if missing:
+                raise RuntimeError(
+                    f"GUI 未注册 hooks: {missing}（chat.HOOK_EVENT_NAMES 已更新，请补注册）")
+            # Key 校验失败会抛 SystemExit，捕获后展示给用户。
+            # 用到的厂商集合 = 参与者 + 总结者，判定逻辑单一来源在 chat.py
+            config.check_config(chat_mod.providers_in_use(PARTICIPANTS, SUMMARIZER_PROVIDER))
             chat_mod.run_discussion(
                 topic=topic,
                 participant_names=PARTICIPANTS,
@@ -204,6 +248,7 @@ class MultiAgentGUI:
                 hooks=hooks,
                 stop_event=self.stop_event,
                 verbose=False,   # GUI 场景静默 stdout，结果全部走 hooks
+                verify_code=True,  # 评测闭环：总结后沙箱验证代码，最终总结区显示 ✓/✗
             )
         except BaseException as e:   # noqa: BLE001 —— 线程内兜底，任何错误都展示到 UI
             self.events.put({"type": "fatal", "message": f"{type(e).__name__}: {e}"})
@@ -266,6 +311,10 @@ class MultiAgentGUI:
             self._clear_waiting()
             self._append(self.final_text, "主持人 · 总结者「小马」\n", "title")
             self._append(self.final_text, f"{msg['summary']}\n", "body")
+        elif mtype == "verification":
+            # 评测闭环结果：最终总结区下方渲染"代码验证 ✓/✗"
+            self._clear_waiting()
+            self._render_verification(msg)
         elif mtype == "fatal":
             self._clear_waiting()
             self._append(self.chat_text, f"致命错误：{msg['message']}\n", "error")

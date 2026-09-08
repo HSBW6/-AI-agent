@@ -13,6 +13,12 @@ MAX_TRANSCRIPT_LEN = 4000        # 塞给模型的对话历史最大字数，防
 MAX_TOKENS = 300                 # DeepSeek 单次回复 token 上限（deepseek-chat 不吐思考过程，够用）
 SUMMARIZER_MAX_TOKENS = 1500     # 总结者「小马」单次回复上限：最终要输出总结 + 完整代码，300 不够用
 
+# ---- 讨论轮数配置（CLI 与 GUI 各自的默认值与边界；集中定义，避免魔法数散落两文件漂移）----
+DEFAULT_MAX_ROUNDS = 3           # run_discussion / CLI 默认轮数
+GUI_DEFAULT_MAX_ROUNDS = 5       # GUI 顶部轮数选择器默认值
+GUI_ROUNDS_MIN = 1               # GUI 轮数下限（Spinbox from_ 与兜底 clamp）
+GUI_ROUNDS_MAX = 10              # GUI 轮数上限（Spinbox to_ 与兜底 clamp）
+
 # ---- 第二个模型：智谱 GLM ----
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
 ZHIPU_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
