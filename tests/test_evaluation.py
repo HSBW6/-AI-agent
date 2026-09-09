@@ -210,3 +210,46 @@ class TestSuitesExtensionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+class ProcessTreeKillTest(unittest.TestCase):
+    """超时杀进程树：必须连孙进程一起杀，不留孤儿"""
+
+    def test_terminate_process_tree_kills_grandchild(self):
+        import os
+        import subprocess
+        import sys
+        import time
+
+        # 子进程：先 spawn 一个"孙进程"，再自己进入死循环
+        child_code = (
+            "import subprocess, sys, time\n"
+            "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "print(p.pid, flush=True)\n"
+            "while True:\n"
+            "    time.sleep(1)\n"
+        )
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_code],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        grandchild_pid = int(child.stdout.readline().strip())   # 等子进程报出孙进程 pid
+
+        try:
+            ev._terminate_process_tree(child)   # 模拟"超时杀进程树"
+            child.wait(timeout=5)
+            time.sleep(0.5)                     # 给 taskkill 一点生效时间
+            # 孙进程应已被连坐：对它发信号 0 会报"进程不存在"（OSError 系）
+            with self.assertRaises(OSError):
+                os.kill(grandchild_pid, 0)
+        finally:
+            if child.poll() is None:
+                child.kill()
+            try:
+                os.kill(grandchild_pid, 0)
+            except OSError:
+                pass
+            else:
+                # 兜底：万一孙进程还活着就手动清掉，别污染本机
+                subprocess.run(
+                    ["taskkill", "/PID", str(grandchild_pid), "/T", "/F"],
+                    capture_output=True,
+                )

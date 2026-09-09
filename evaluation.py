@@ -34,10 +34,12 @@ CLI 打印"代码验证 ✓/✗"，GUI 在最终总结区渲染同样结论—�
 """
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
-import re
 from dataclasses import dataclass, field
+
 
 # ---------------------------------------------------------------------------
 # 1. 代码块提取
@@ -271,6 +273,38 @@ def _main():
 _main()
 """
 
+def _terminate_process_tree(proc):
+    """超时后杀整棵进程树（子进程 + 它 spawn 的孙子进程）。
+
+    只杀直接子进程可能留孤儿：若被评测代码逃逸沙箱并创建了孙进程，
+    TerminateProcess 不会连坐。Windows 用 taskkill /T /F 递归杀整树，
+    POSIX 用 start_new_session + os.killpg 杀整个进程组。
+    """
+    if os.name == "nt":
+        kill_kwargs = {}
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            kill_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            # /T = 连带子进程树, /F = 强制杀; pythonw 启动时 CREATE_NO_WINDOW 防闪黑框
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True, timeout=10, **kill_kwargs,
+            )
+        except Exception:
+            try:
+                proc.kill()          # taskkill 失败时退回直接杀
+            except Exception:
+                pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
 
 # ---------------------------------------------------------------------------
 # 5. 结果类型与对外 API
@@ -341,20 +375,42 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
     try:
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"   # 双保险：runner 自身 reconfigure 为主
-        proc = subprocess.run(
+        popen_kwargs = {}
+        if os.name == "nt":
+            # Windows：让子进程自成一个进程组，超时后 taskkill /T 才能整树击杀
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            # POSIX：新会话 → 整个进程组可被 os.killpg 一锅端
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(
             [sys.executable, "-I", "-c", _RUNNER_SCRIPT],
-            input=payload_json.encode("utf-8"),
-            capture_output=True, timeout=timeout, env=env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env, **popen_kwargs,
         )
-    except subprocess.TimeoutExpired:
+        try:
+            out_bytes, err_bytes = proc.communicate(
+                input=payload_json.encode("utf-8"), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(proc)          # 先杀整棵进程树
+            try:
+                out_bytes, err_bytes = proc.communicate(timeout=5)   # 回收管道
+            except Exception:
+                out_bytes, err_bytes = b"", b""
+            return VerificationResult(
+                passed=False, status="timeout", code=code,
+                error=f"执行超时（>{timeout}s），疑似死循环或复杂度失控，已终止进程树",
+                suite_label=label,
+            )
+    except FileNotFoundError as e:
         return VerificationResult(
-            passed=False, status="timeout", code=code,
-            error=f"执行超时（>{timeout}s），疑似死循环或复杂度失控",
+            passed=False, status="error", code=code,
+            error=f"无法启动沙箱进程: {e}",
             suite_label=label,
         )
 
-    out_text = proc.stdout.decode("utf-8", errors="replace")
-    stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+
+    out_text = out_bytes.decode("utf-8", errors="replace")
+    stderr = err_bytes.decode("utf-8", errors="replace").strip()
     marker = "__EVAL_RESULT__"
     start = out_text.rfind(marker)
     if start < 0:
