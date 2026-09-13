@@ -66,7 +66,11 @@ class MultiAgentGUI:
         ctrl.pack(fill="x", pady=(6, 0))
         self.start_btn = tk.Button(ctrl, text="开始讨论", width=12, command=self._start)
         self.start_btn.pack(side="left")
-        self.stop_btn = tk.Button(ctrl, text="停止", width=10, command=self._stop, state="disabled")
+        # 文案诚实化：点「停止」只是不再进入下一轮，正在飞行中的 HTTP 请求无法中断，
+        # 必须等它返回（单次请求超时 60s）才真正退出，故按钮不写宽度、由文案自适应。
+        self.stop_btn = tk.Button(
+            ctrl, text="停止（等待当前请求返回，最多 ~60s）",
+            command=self._stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
         # 讨论轮数选择器：默认值 / 范围来自 config.py 集中常量（改默认轮数只改 config.py 一处）
         tk.Label(ctrl, text="讨论轮数:", fg="#333333").pack(side="left", padx=(12, 2))

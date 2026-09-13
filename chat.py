@@ -1,6 +1,13 @@
 """Multi-Agent 互聊主程序：不同模型的两个角色轮流发言 + 总结收尾 + 代码评测闭环"""
 import config
-from evaluation import DEFAULT_SUITE, format_verification, run_code_verification, pick_suite
+from evaluation import (
+    DEFAULT_SUITE,
+    ensure_utf8_stdio,          # 新增：统一父子进程的 stdout/stderr 为 UTF-8
+    format_verification,
+    run_code_verification,
+    pick_suite,
+)
+
 from agent import Agent
 
 # 默认题目（单一来源：chat.py 与 gui.py 共用，避免两份文案各自漂移）
@@ -319,8 +326,10 @@ def clean_reply(reply, name):
         reply = reply.strip("“”\"'").strip()
     return reply
 
-
 if __name__ == "__main__":
+    # 先切 UTF-8：CLI 在 GBK 控制台/重定向到文件时，中文与 ✓ 符号才不会崩
+    ensure_utf8_stdio()
+
     # 【解题小组模式·融合版】傲娇鱼学霸 vs 绿茶面试官，总结者小马收尾。
     # 参与者阵容 / 总结者厂商 / 轮数默认值均收敛为模块级单一来源
     # （DEFAULT_PARTICIPANTS / DEFAULT_SUMMARIZER_PROVIDER / config.DEFAULT_MAX_ROUNDS），

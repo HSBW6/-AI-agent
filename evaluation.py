@@ -582,6 +582,25 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
 # 6. CLI 展示辅助
 # ---------------------------------------------------------------------------
 
+def ensure_utf8_stdio():
+    """把父进程 stdout / stderr 切到 UTF-8，避免 GBK 控制台下输出 ✓/✗ 崩溃。
+
+    背景（坑 8 / 待办 4.1）：format_verification 会打印 ✓ / ✗（U+2713 / U+2717），
+    GBK(cp936) 编码不了。交互式控制台由 Python 走 WinAPI 不会崩，但
+    `python chat.py > log.txt`、管道重定向、以及部分 IDE 捕获 stdout 时，
+    sys.stdout.encoding 会回退到 cp936，直接抛 UnicodeEncodeError。
+
+    runner 子进程内部已自行 reconfigure（见 _RUNNER_SCRIPT），本函数专供父进程
+    入口（chat.py __main__ 与 evaluation.py demo）在打印前调用。容错优先：流不支持
+    reconfigure（非 TextIOWrapper）或已关闭时静默跳过，绝不因设置编码本身把程序弄崩。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def format_verification(result):
     """把 VerificationResult 渲染成 CLI 的多行文本（chat.py 打印用）。
 
@@ -616,6 +635,8 @@ def format_verification(result):
 
 if __name__ == "__main__":
     # 快速自测：跑默认两数之和套件（供手工冒烟，不进入 unittest）
+    # 注意：demo 会 print 带 ✓ 的验证结果，Windows 默认 GBK 直接 UnicodeEncodeError
+    ensure_utf8_stdio()
     import textwrap
     demo = textwrap.dedent("""
         总结要点……（略）
