@@ -69,6 +69,37 @@ def extract_code_blocks(text):
     return blocks
 
 
+def _block_defines(block, names):
+    """代码块里是否**定义**了 names 中的函数/类（只认 def/class 定义行）。"""
+    for name in names:
+        if re.search(r"^\s*(?:async\s+)?def\s+%s\s*\(" % re.escape(name), block, re.M):
+            return True
+        if re.search(r"^\s*class\s+%s\s*[\(:]" % re.escape(name), block, re.M):
+            return True
+    return False
+
+
+def pick_verification_block(blocks, suite, use_last_block=True):
+    """从多个代码块里挑出真正定义了解题函数的那一块。
+
+    规则（从强到弱）：
+      1) 块内定义了套件的 function_names 或 class_names → 命中多块时取最后一块
+         （同一题常被反复重写，定稿在最后）
+      2) 一块都没命中 → 回退旧语义：
+         use_last_block=True 取最后一块，False 取第一块
+    """
+    if not blocks:
+        return None
+    suite = suite or {}
+    names = list(suite.get("function_names", []) or []) \
+        + list(suite.get("class_names", []) or [])
+    matched = [b for b in blocks if _block_defines(b, names)]
+    if matched:
+        return matched[-1]
+    return blocks[-1] if use_last_block else blocks[0]
+
+
+
 # ---------------------------------------------------------------------------
 # 2. 受限命名空间：只提供"写算法"所需的安全内建
 # ---------------------------------------------------------------------------
@@ -412,8 +443,9 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
       summary_text    总结者输出全文（从中解析 ```python 代码块）
       suite_name      题目用例套件 key（见 TEST_SUITES，扩展新题在此加）
       timeout         子进程执行总超时（秒），防止死循环拖垮调用方
-      use_last_block  总结含多个代码块时，是否只用最后一个（默认 True，
-                      通常最后一块才是最终代码；其余块按"思路草稿"忽略）
+       use_last_block  多块都没命中解题函数时的兜底：True 取最后一块，False 取
+                      第一块（默认 True）。命中 function_names/class_names 的块
+                      始终优先，不受此开关影响
     返回：
       VerificationResult
       status: str             # pass / fail / no_code / error / timeout / skipped
@@ -436,7 +468,8 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
             error="总结中未找到 ```python 代码块（人设约定：代码必须用 python 围栏包裹）",
             suite_label=label,
         )
-    code = blocks[-1] if use_last_block else blocks[0]
+    code = pick_verification_block(blocks, suite, use_last_block)
+
 
     if suite is None:
         return VerificationResult(
