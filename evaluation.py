@@ -172,6 +172,72 @@ def get_suite(suite_name):
     return TEST_SUITES.get(suite_name)
 
 
+# 自动挑套件的关键词表：只放高置信的题目专名，宁可跳过也不猜错。
+# 键 = 套件 key，值 = 命中该题的关键词（一律小写，匹配前题面也转小写）
+_AUTO_MATCH_HINTS = {
+    "two_sum": ("两数之和", "two sum", "two_sum", "twosum", "2sum"),
+}
+
+
+def pick_suite(topic):
+    """按题目描述自动挑用例套件；拿不准返回 None（调用方应跳过验证，不猜）。
+
+    只认高置信专名，不放 target / 数组 这类泛词——避免给不相关题目
+    硬套 two_sum 用例，把好代码判成"假红"。
+    """
+    if not topic:
+        return None
+    text = topic.lower()
+    for suite_name, hints in _AUTO_MATCH_HINTS.items():
+        if suite_name in TEST_SUITES and any(h in text for h in hints):
+            return suite_name
+    return None
+
+
+def validate_suite(suite_name):
+    """父进程预校验用例套件，返回问题清单（空列表 = 合法）。
+
+    ⚠️ 必须在起子进程之前调用。套件坏掉时若照常跑到 runner，例如 cases 为空，
+    子进程里的 `for _case in cases` 会空转、all_ok 保持 True → 父进程拿到
+    ok=True 直接渲染成 [代码验证 ✓]（**假 pass**：什么都没验，却报通过）。
+    把"套件级故障"拦在父进程，统一报 error，与"代码坏"（fail）区分开。
+
+    校验项：
+      1. 套件存在；
+      2. cases 是非空 list（空套件 = 无用例可验，必然假 pass）；
+      3. 每个用例的 args 是 list/tuple（runner 用 fn(*args) 展开发参）；若是字符串、
+         数字这类非序列，会被按字符/类型错误展开，验的就不是原意了；
+      4. 每个用例的 checker 名在套件 checkers 中存在且模板为非空字符串
+         （缺模板时 runner 抛 RuntimeError，会把"套件坏"误报成"代码坏"）。
+    """
+    suite = get_suite(suite_name)
+    if suite is None:
+        return [f"用例套件不存在: {suite_name}（请在 evaluation.TEST_SUITES 注册）"]
+
+    problems = []
+    cases = suite.get("cases")
+    if not isinstance(cases, list) or not cases:
+        problems.append("cases 为空或不是列表：无用例可验证（继续跑会假 pass）")
+        return problems          # 没有用例，逐用例校验无意义
+
+    checkers = suite.get("checkers") or {}
+    for idx, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            problems.append(f"第 {idx} 个用例不是 dict: {case!r}")
+            continue
+        name = case.get("name") or f"#{idx}"
+        if not isinstance(case.get("args"), (list, tuple)):
+            problems.append(
+                f"用例「{name}」的 args 必须是 list/tuple（会被 fn(*args) 展开），"
+                f"实际 {type(case.get('args')).__name__}")
+        checker_name = case.get("checker")
+        template = checkers.get(checker_name)
+        if not isinstance(template, str) or not template.strip():
+            problems.append(f"用例「{name}」引用的 checker 无效: {checker_name!r}")
+    return problems
+
+
+
 # ---------------------------------------------------------------------------
 # 4. 子进程 runner：受限执行用户代码 + 逐用例断言
 # ---------------------------------------------------------------------------
@@ -188,6 +254,7 @@ def _main():
     # 父进程统一按 UTF-8 解码；子进程被捕获时无控制台，必须显式 reconfig）
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
     try:
@@ -250,8 +317,15 @@ def _main():
 
     # 3) 逐用例断言（每个用例独立捕获异常，互不影响）
     checkers = data.get("checkers", {})
+    _cases = data.get("cases", [])
+    if not _cases:
+        # 双保险：父进程 validate_suite 已拦空套件，这里再兜一层，
+        # 防止空 for 循环让 all_ok 保持 True 而报出"假 pass"
+        out["error"] = "用例套件无效：cases 为空，无用例可验证"
+        sys.stdout.write("__EVAL_RESULT__" + json.dumps(out, ensure_ascii=False) + "__END__")
+        return
     all_ok = True
-    for _case in data.get("cases", []):
+    for _case in _cases:
         _tr = {"name": _case["name"], "passed": False, "detail": ""}
         try:
             _result = fn(*_case["args"])
@@ -322,7 +396,7 @@ class TestResult:
 class VerificationResult:
     """一次完整代码验证的结果"""
     passed: bool            # 代码提取成功且所有用例通过才算 True
-    status: str             # pass / fail / no_code / error / timeout
+    status: str             # pass / fail / no_code / error / timeout / skipped
     tests: list = field(default_factory=list)   # list[TestResult]
     error: str = None       # 失败/异常说明（无错误时为 None）
     code: str = None        # 被实际验证的代码块（未提取到则为 None）
@@ -342,7 +416,16 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
                       通常最后一块才是最终代码；其余块按"思路草稿"忽略）
     返回：
       VerificationResult
+      status: str             # pass / fail / no_code / error / timeout / skipped
     """
+
+    if suite_name is None:
+        # 自动模式没匹配到套件：中性跳过，不算失败
+        return VerificationResult(
+            passed=False, status="skipped", code=None,
+            error="未匹配到该题目的用例套件，已跳过代码验证",
+            suite_label=_UNKNOWN_LABEL,
+        )
     suite = get_suite(suite_name)
     label = suite["label"] if suite else _UNKNOWN_LABEL
 
@@ -362,6 +445,16 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
             suite_label=label,
         )
 
+    # 父进程预校验（批次 1.2）：套件本身有毛病就直接报 error，
+    # 绝不放行到子进程——否则空套件会让 runner 空转出"假 pass"。
+    problems = validate_suite(suite_name)
+    if problems:
+        return VerificationResult(
+            passed=False, status="error", code=code,
+            error="用例套件无效：" + "；".join(problems),
+            suite_label=label,
+        )
+
     payload = {
         "code": code,
         "allowed_builtins": list(SANDBOX_BUILTINS),
@@ -373,8 +466,12 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
     payload_json = json.dumps(payload, ensure_ascii=False)
 
     try:
-        env = dict(os.environ)
-        env["PYTHONIOENCODING"] = "utf-8"   # 双保险：runner 自身 reconfigure 为主
+        # 最小环境变量：子进程只要能起来就够，不需要（也不该拿到）API Key 等敏感变量。
+        # 注：-I 隐含 -E，PYTHON* 环境变量一律被忽略，故此处不设 PYTHONIOENCODING；
+        #     编码已由 runner 自己 reconfigure 保证。Windows 必须保留 SystemRoot，否则子进程可能起不来。
+        _env_allow = ("SystemRoot", "windir", "PATH", "TEMP", "TMP", "PATHEXT")
+        env = {k: os.environ[k] for k in _env_allow if k in os.environ}
+
         popen_kwargs = {}
         if os.name == "nt":
             # Windows：让子进程自成一个进程组，超时后 taskkill /T 才能整树击杀
@@ -465,6 +562,11 @@ def format_verification(result):
         lines.append(f"[代码验证 ✓] {label}：{n}/{n} 用例通过"
                      + (f"（命中函数 {result.function}）" if result.function else ""))
         return "\n".join(lines)
+
+    if result.status == "skipped":
+        # 用 ASCII '-' 保持中性，别让人误以为判失败
+        return f"[代码验证 -] {label}：{result.error or '已跳过代码验证'}"
+
 
     lines.append(f"[代码验证 ✗] {label}：")
     if result.status == "fail":

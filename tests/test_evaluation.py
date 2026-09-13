@@ -9,6 +9,8 @@
     错误逻辑失败且可追溯；未找到函数 / 无代码 / 语法错误 / 危险内建拦截 /
     死循环超时；多代码块取最后一块
   - TEST_SUITES 默认两数之和套件结构与可扩展性（新增题目在 TEST_SUITES 加 key）
+  - validate_suite 父进程预校验（批次 1.2）：空套件 / args 非 list / checker
+    缺失都必须被拦成 status="error"，绝不放行出"假 pass"
 
 注意：run_code_verification 每次真实启动一个受限子进程（毫秒级），
 本文件刻意不 mock，保证"离线单测也在验证真实沙箱管线"。
@@ -168,6 +170,79 @@ class RunVerificationTest(unittest.TestCase):
         )
         r = ev.run_code_verification(text)
         self.assertTrue(r.passed, msg="应用最后一个代码块（最终版），而非草稿")
+
+
+class ValidateSuiteTest(unittest.TestCase):
+    """批次 1.2：validate_suite 父进程预校验
+
+    核心回归点：cases 为空时，runner 的 for 循环空转、all_ok 保持 True，
+    旧实现会渲染成 [代码验证 ✓]（假 pass）。预校验必须把它拦成 error。
+    """
+
+    def test_valid_suite_has_no_problems(self):
+        self.assertEqual(ev.validate_suite("two_sum"), [])
+
+    def test_unknown_suite_reported(self):
+        problems = ev.validate_suite("_no_such_suite")
+        self.assertTrue(problems)
+        self.assertIn("不存在", problems[0])
+
+    def test_empty_cases_rejected_and_never_passes(self):
+        ev.TEST_SUITES["_empty_cases"] = {
+            "label": "演示·空套件",
+            "function_names": ["two_sum"],
+            "checkers": {},
+            "cases": [],
+        }
+        try:
+            problems = ev.validate_suite("_empty_cases")
+            self.assertTrue(any("cases 为空" in p for p in problems))
+            r = ev.run_code_verification(GOOD_TWO_SUM, suite_name="_empty_cases")
+            self.assertFalse(r.passed)                       # 绝不能是 pass
+            self.assertEqual(r.status, "error")
+            self.assertIn("套件无效", r.error)
+            self.assertEqual(r.tests, [])                    # 没跑任何用例
+        finally:
+            ev.TEST_SUITES.pop("_empty_cases", None)
+
+    def test_args_not_list_reported(self):
+        ev.TEST_SUITES["_bad_args"] = {
+            "label": "演示·args 非 list",
+            "function_names": ["two_sum"],
+            "checkers": {"ok": "assert result"},
+            "cases": [{"name": "坏用例", "args": "hello", "checker": "ok"}],
+        }
+        try:
+            problems = ev.validate_suite("_bad_args")
+            self.assertTrue(any("args 必须是 list" in p for p in problems))
+            r = ev.run_code_verification(GOOD_TWO_SUM, suite_name="_bad_args")
+            self.assertEqual(r.status, "error")
+            self.assertIn("套件无效", r.error)
+        finally:
+            ev.TEST_SUITES.pop("_bad_args", None)
+
+    def test_missing_checker_reported(self):
+        ev.TEST_SUITES["_bad_checker"] = {
+            "label": "演示·checker 缺失",
+            "function_names": ["two_sum"],
+            "checkers": {},
+            "cases": [{"name": "无模板", "args": [[2, 7], 9], "checker": "nope"}],
+        }
+        try:
+            problems = ev.validate_suite("_bad_checker")
+            self.assertTrue(any("checker 无效" in p for p in problems))
+            r = ev.run_code_verification(GOOD_TWO_SUM, suite_name="_bad_checker")
+            self.assertEqual(r.status, "error")
+            self.assertIn("套件无效", r.error)
+        finally:
+            ev.TEST_SUITES.pop("_bad_checker", None)
+
+    def test_default_suite_still_passes_after_precheck(self):
+        """回归护栏：预校验不得误伤合法套件（two_sum 仍 6/6 通过）"""
+        r = ev.run_code_verification(GOOD_TWO_SUM, suite_name="two_sum")
+        self.assertTrue(r.passed, msg=r.error)
+        self.assertEqual(r.status, "pass")
+        self.assertEqual(len(r.tests), 6)
 
 
 class TestSuitesExtensionTest(unittest.TestCase):

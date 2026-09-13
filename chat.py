@@ -1,7 +1,7 @@
 """Multi-Agent 互聊主程序：不同模型的两个角色轮流发言 + 总结收尾 + 代码评测闭环"""
 import config
+from evaluation import DEFAULT_SUITE, format_verification, run_code_verification, pick_suite
 from agent import Agent
-from evaluation import DEFAULT_SUITE, format_verification, run_code_verification
 
 # 默认题目（单一来源：chat.py 与 gui.py 共用，避免两份文案各自漂移）
 DEFAULT_TOPIC = (
@@ -209,8 +209,10 @@ def run_discussion(
     #    CLI/GUI 展示"代码验证 ✓/✗"。默认关闭，仅 CLI/GUI 入口显式开启，
     #    不改变 run_discussion 默认事件序列与返回值契约（str）。
     if verify_code:
+        # verify_suite=None → 自动模式：按题面挑套件，拿不准则 skipped（不猜、不假红）
+        suite_name = verify_suite if verify_suite is not None else pick_suite(topic)
         try:
-            verification = run_code_verification(summary, suite_name=verify_suite)
+            verification = run_code_verification(summary, suite_name=suite_name)
             _out("----- 代码验证（评测闭环） -----")
             _out(format_verification(verification))
             _emit(
@@ -344,5 +346,7 @@ if __name__ == "__main__":
         participant_names=participants,
         summarizer_provider=summarizer_provider,
         use_running_summary=True,  # True=滚动摘要(省token但每轮+1次API) / False=全量历史(对照)
-        verify_code=True,          # 评测闭环：总结后沙箱执行代码并跑题目用例断言
+        verify_code=True,
+        verify_suite=None,         # None=按题目自动挑套件，拿不准则跳过验证
+        # 评测闭环：总结后沙箱执行代码并跑题目用例断言
     )

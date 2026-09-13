@@ -19,9 +19,13 @@ from tkinter import scrolledtext
 
 import config
 import chat as chat_mod
+import evaluation
 
 # 默认题目单一来源：直接复用 chat.py 的 DEFAULT_TOPIC，避免两份文案漂移
 DEFAULT_TOPIC = chat_mod.DEFAULT_TOPIC
+# 代码验证下拉的哨兵项：与 _resolve_verify 一一对应
+AUTO_SUITE_LABEL = "自动识别"
+NO_VERIFY_LABEL = "不验证"
 # 参与者阵容 / 总结者厂商 / hooks 事件名清单：单一来源在 chat.py（DEFAULT_PARTICIPANTS /
 # DEFAULT_SUMMARIZER_PROVIDER / HOOK_EVENT_NAMES），GUI 只 import 不重抄，防止双份漂移。
 PARTICIPANTS = chat_mod.DEFAULT_PARTICIPANTS
@@ -70,6 +74,12 @@ class MultiAgentGUI:
         tk.Spinbox(ctrl, from_=config.GUI_ROUNDS_MIN, to=config.GUI_ROUNDS_MAX,
                    textvariable=self.rounds_var, width=3,
                    justify="center").pack(side="left")
+        tk.Label(ctrl, text="代码验证:", fg="#333333").pack(side="left", padx=(12, 2))
+        self.suite_var = tk.StringVar(value=AUTO_SUITE_LABEL)
+        self.suite_menu = tk.OptionMenu(ctrl, self.suite_var, *self._suite_choices())
+        self.suite_menu.config(width=13)
+        self.suite_menu.pack(side="left")
+
         self.status_var = tk.StringVar(value="就绪：输入题目后点击「开始讨论」")
         tk.Label(ctrl, textvariable=self.status_var, fg="#555555").pack(side="left", padx=8)
 
@@ -152,6 +162,25 @@ class MultiAgentGUI:
         self.stop_btn.config(state="normal" if running else "disabled")
         self.topic_text.config(state="disabled" if running else "normal")
 
+    def _suite_choices(self):
+        """下拉项：自动识别 / 各套件 label / 不验证"""
+        return ([AUTO_SUITE_LABEL]
+                + [s["label"] for s in evaluation.TEST_SUITES.values()]
+                + [NO_VERIFY_LABEL])
+
+    def _resolve_verify(self):
+        """下拉选择 → run_discussion 的 (verify_code, verify_suite)"""
+        choice = self.suite_var.get()
+        if choice == NO_VERIFY_LABEL:
+            return False, None
+        if choice == AUTO_SUITE_LABEL:
+            return True, None
+        for name, suite in evaluation.TEST_SUITES.items():
+            if suite["label"] == choice:
+                return True, name
+        return True, None   # 未知选项兜底按自动处理
+
+
     def _clear_outputs(self):
         for w in (self.chat_text, self.summary_text, self.final_text):
             w.config(state="normal")
@@ -159,7 +188,7 @@ class MultiAgentGUI:
             w.config(state="disabled")
 
     def _render_verification(self, msg):
-        """在最终总结区渲染代码验证结论（评测闭环）：✓ 绿 / ✗ 红 + 失败详情"""
+        """在最终总结区渲染代码验证结论（评测闭环）：✓ 绿 / ✗ 红 / - 灰（跳过）"""
         label = msg.get("suite_label") or "代码"
         status = msg.get("status")
         error = msg.get("error") or "验证失败"
@@ -181,11 +210,20 @@ class MultiAgentGUI:
                     self._append(self.final_text,
                                  f"  ·「{t.get('name')}」{t.get('detail') or '断言失败'}\n",
                                  "verify_detail")
+        elif status == "skipped":
+            # 自动识别没匹配到套件：灰字中性提示，不当作失败
+            self._append(self.final_text, sep, "meta")
+            self._append(self.final_text, f"[代码验证 -] {label}：{error}\n", "meta")
         else:
             # no_code / error / timeout：直接展示原因
             self._append(self.final_text, sep, "meta")
             self._append(self.final_text, f"[代码验证 ✗] {label}：{error}\n", "verify_fail")
-        self.status_var.set(f"代码验证 {'通过 ✓' if status == 'pass' else '未通过 ✗'}（评测闭环）")
+
+        if status == "skipped":
+            self.status_var.set("代码验证已跳过（未匹配到用例套件）")
+        else:
+            self.status_var.set(f"代码验证 {'通过 ✓' if status == 'pass' else '未通过 ✗'}（评测闭环）")
+
 
     # ---------- 按钮行为 ----------
     def _start(self):
@@ -202,7 +240,12 @@ class MultiAgentGUI:
         self.status_var.set(f"讨论进行中…（共 {max_rounds} 轮，可在任意发言间隙点「停止」）")
         self._append(self.chat_text, "系统：讨论开始，后台调用两家模型 API，界面实时刷新。\n", "system")
         self.stop_event = threading.Event()
-        self.worker = threading.Thread(target=self._worker_run, args=(topic, max_rounds), daemon=True)
+        verify_code, verify_suite = self._resolve_verify()
+        self.worker = threading.Thread(
+            target=self._worker_run,
+            args=(topic, max_rounds, verify_code, verify_suite),
+            daemon=True)
+
         self.worker.start()
 
     def _stop(self):
@@ -218,7 +261,7 @@ class MultiAgentGUI:
         self._waiting_since = None
         self._last_shown_sec = -1
 
-    def _worker_run(self, topic, max_rounds):
+    def _worker_run(self, topic, max_rounds, verify_code, verify_suite):
         """后台线程：跑 run_discussion，把事件经 hooks 塞进 queue"""
         hooks = {
             "on_start": lambda **kw: self.events.put({"type": "start", **kw}),
@@ -248,7 +291,8 @@ class MultiAgentGUI:
                 hooks=hooks,
                 stop_event=self.stop_event,
                 verbose=False,   # GUI 场景静默 stdout，结果全部走 hooks
-                verify_code=True,  # 评测闭环：总结后沙箱验证代码，最终总结区显示 ✓/✗
+                verify_code=verify_code,
+                verify_suite=verify_suite,   # None=自动 / 套件名 / 配合 verify_code=False 则关闭
             )
         except BaseException as e:   # noqa: BLE001 —— 线程内兜底，任何错误都展示到 UI
             self.events.put({"type": "fatal", "message": f"{type(e).__name__}: {e}"})
