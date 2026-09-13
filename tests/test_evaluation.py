@@ -7,7 +7,9 @@
   - extract_code_blocks：语言围栏识别 / 大小写 / 多块 / 非 python 围栏过滤
   - run_code_verification：正确解（函数 / 驼峰 / class Solution）通过；
     错误逻辑失败且可追溯；未找到函数 / 无代码 / 语法错误 / 危险内建拦截 /
-    死循环超时；多代码块取最后一块
+    死循环超时；多代码块回退语义（都没命中解题函数时才取最后一块）
+  - pick_verification_block（批次 1.3）：多代码块优先选定义了 function_names /
+    class_names 的块；命中多块取最后一块；都不命中才回退 use_last_block
   - TEST_SUITES 默认两数之和套件结构与可扩展性（新增题目在 TEST_SUITES 加 key）
   - validate_suite 父进程预校验（批次 1.2）：空套件 / args 非 list / checker
     缺失都必须被拦成 status="error"，绝不放行出"假 pass"
@@ -161,6 +163,8 @@ class RunVerificationTest(unittest.TestCase):
         self.assertIn("超时", r.error)
 
     def test_multiple_blocks_uses_last_one(self):
+        # 批 1.3 后本用例走"命中多块取最后一块"分支（两块都定义了 two_sum），
+        # 结果与旧语义一致——定稿在最后。"都不命中"的回退见 PickVerificationBlockTest。
         text = (
             "草稿：\n" + wrapped("""
                 def two_sum(nums, target):
@@ -170,6 +174,73 @@ class RunVerificationTest(unittest.TestCase):
         )
         r = ev.run_code_verification(text)
         self.assertTrue(r.passed, msg="应用最后一个代码块（最终版），而非草稿")
+
+
+class PickVerificationBlockTest(unittest.TestCase):
+    """批次 1.3 收尾：多代码块拣块策略（pick_verification_block / _block_defines）
+
+    旧语义：机械取最后一块。新语义：优先选"定义了套件 function_names /
+    class_names 的块"；一块都没命中才回退 use_last_block（True=最后一块）。
+    既测纯函数，也测 run_code_verification 端到端是否真的用上新策略。
+    """
+
+    SUITE = {"function_names": ["two_sum"], "class_names": ["Solution"]}
+
+    def test_block_defining_function_wins_over_trailing_debug_block(self):
+        good = "def two_sum(nums, target):\n    return [0, 1]"
+        debug = "print('debug')"
+        self.assertEqual(
+            ev.pick_verification_block([good, debug], self.SUITE), good)
+
+    def test_multiple_matching_blocks_prefers_last(self):
+        first = "def two_sum(nums, target):\n    return [0, 0]"
+        second = "def two_sum(nums, target):\n    return [0, 1]"
+        self.assertEqual(
+            ev.pick_verification_block([first, second], self.SUITE), second)
+
+    def test_class_name_match_is_recognised(self):
+        draft = "print('thinking')"
+        solution = ("class Solution:\n"
+                    "    def twoSum(self, nums, target):\n"
+                    "        return [0, 1]")
+        self.assertEqual(
+            ev.pick_verification_block([draft, solution], self.SUITE), solution)
+
+    def test_no_match_falls_back_to_last_or_first(self):
+        a, b = "print('a')", "print('b')"
+        self.assertEqual(ev.pick_verification_block([a, b], self.SUITE), b)
+        self.assertEqual(
+            ev.pick_verification_block([a, b], self.SUITE, use_last_block=False), a)
+
+    def test_mention_only_does_not_count_as_definition(self):
+        # 只在注释/字符串里提到函数名，不算"定义了函数"，不得被误选
+        mention = "# two_sum 思路见上\nprint('two_sum')"
+        real = wrapped("""
+            def two_sum(nums, target):
+                return [0, 1]
+        """)
+        self.assertFalse(ev._block_defines(mention, ["two_sum"]))
+        self.assertEqual(
+            ev.pick_verification_block([mention, real], self.SUITE), real)
+
+    def test_empty_blocks_returns_none(self):
+        self.assertIsNone(ev.pick_verification_block([], self.SUITE))
+
+    def test_end_to_end_prefers_defining_block(self):
+        """回归 smoke_1_3 场景：定稿块在前、末尾是调试块，仍应命中定稿块并 pass"""
+        text = "final:\n" + GOOD_TWO_SUM + "\ndebug script:\n" + wrapped("print('debug')")
+        r = ev.run_code_verification(text)
+        self.assertTrue(r.passed, msg=r.error)
+        self.assertEqual(r.status, "pass")
+        self.assertIn("two_sum", r.code)
+
+    def test_end_to_end_falls_back_when_nothing_matches(self):
+        """一块都没定义解题函数 → 回退旧语义（取最后一块），报错而非静默 pass"""
+        text = wrapped("print('a')") + "\n" + wrapped("print('b')")
+        r = ev.run_code_verification(text)
+        self.assertEqual(r.status, "error")
+        self.assertIn("未找到解题函数", r.error)
+        self.assertIn("print('b')", r.code)
 
 
 class ValidateSuiteTest(unittest.TestCase):
