@@ -147,14 +147,28 @@ def run_discussion(
             # （智谱免费档服务端波动大，实测单次可等 10~20s，无提示会像卡死）
             _emit("on_speaker_start", rnd=rnd, name=agent.name)
             try:
-                reply = agent.say(context)
+                reply = agent.say(
+                    context,
+                    # 3.1：把停止信号传进 Agent，退避等待才可被打断
+                    stop_event=stop_event,
+                    # 3.2：把 Agent 的截断告警接到既有 on_warning 事件上
+                    #（事件名早就注册好了，GUI 侧一行都不用改）
+                    on_warning=lambda message: _emit("on_warning", message=message),
+                )
             except Exception as e:
+
                 # 单个角色失败（限流/网络等）不拖垮整场讨论：记录后继续
                 error = f"{type(e).__name__}: {e}"
                 _out(f"[警告] {agent.name} 发言失败：{error}")
                 reply = f"（{agent.name} 本轮发言失败，跳过）"
                 failed = True
+            # 3.1：若"停止"是在这次发言的退避等待里按下的，say() 会返回空串，
+            # 这里直接收工——不把这句空回复当成一次真实发言记进 transcript
+            if not reply and stop_event is not None and stop_event.is_set():
+                stopped = True
+                break
             reply = clean_reply(reply, agent.name)
+
             if not reply:
                 reply = "……"
             line = f"{agent.name}：{reply}"
@@ -177,7 +191,9 @@ def run_discussion(
             new_summary = update_summary(
                 recorder, topic, summary_text, round_lines,
                 rnd, summary_max_len, verbose,
+                stop_event=stop_event,   # 3.1：轮末压缩往往要等 10~20s，也必须能被打断
             )
+
             if new_summary is not None:
                 # 摘要更新成功：本轮原文并入摘要，清空 recent_lines
                 summary_text = new_summary
@@ -240,7 +256,8 @@ def run_discussion(
     return summary
 
 
-def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len, verbose=True):
+def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len, verbose=True,
+                   stop_event=None):
     """把【旧摘要】+【本轮新增发言】合并成一条更短的滚动摘要。
 
     设计取舍（坑①）：这是每轮额外的一次 API 调用，轮数越多成本越高；
@@ -269,7 +286,13 @@ def update_summary(recorder, topic, old_summary, new_lines, rnd, max_len, verbos
         "5. 只输出摘要正文，不要寒暄、不要评价、不要出现名字前缀。"
     )
     try:
-        return recorder.say(head + body, extra_instruction=instruction).strip()
+        # 3.1：被"停止"打断时 say() 返回空串，这里必须转成 None——
+        # 否则调用方会误判成"压缩成功"，把滚动摘要清成空串、还顺手丢掉了本轮原话
+        text = recorder.say(
+            head + body, extra_instruction=instruction, stop_event=stop_event
+        ).strip()
+        return text or None
+
     except Exception as e:
         if verbose:
             print(f"[警告] 第 {rnd} 轮滚动摘要更新失败：{type(e).__name__}: {e}，沿用旧摘要")
@@ -281,37 +304,41 @@ def transcript_text(summary, recent_lines):
     """把 (滚动摘要, 最近原始行) 拼成喂给模型的上下文。
 
     拼接顺序：摘要在前（跨轮记忆），最近对话在后（本轮现场）。
-    预算分配：摘要几乎不占预算（它每次更新都限长），recent_lines 按"完整行"
-    从尾部保留；万一摘要异常超长，才对它做硬切兜底——
-    也就是说，RunningSummary 没控制住长度时，这里的按行裁剪仍是最后防线。
+    预算分配（3.5）：摘要最多占 MAX_TRANSCRIPT_LEN 的 60%，剩下 40% 硬性留给
+    recent_lines（按"完整行"从尾部保留）。以前摘要"不占预算"，一旦记录员不听话
+    把摘要写长，就会把原话挤到一行不剩——参与者全在看二手摘要、看不到任何原始发言。
+    现在两边都保底：摘要把原话挤不没，原话也把跨轮记忆挤不没。
     保留老逻辑语义：不能从行中间切开喂模型（实测复现残句）。
     """
     max_len = config.MAX_TRANSCRIPT_LEN
+    # 3.5 预算切分：摘要最多吃 60%，剩下 40% 硬性留给"最近原话"。
+    # 以前摘要"不占预算"，一旦记录员把摘要写长，recent_lines 会被挤到一行不剩——
+    # 参与者全在看二手摘要、看不到原始发言，讨论质量直接塌方。
+    summary_budget = int(max_len * 0.6)
+    recent_budget = max_len - summary_budget
+
     parts = []
-    budget = max_len
-
-    # 摘要区：正常情况下远小于预算，直接全保留
+    # 摘要区：正常远小于预算，直接全留；真超了从尾部砍
+    #（话题锚点固定躺在摘要开头，所以砍尾巴、保脑袋）
     if summary:
-        if len(summary) + 1 > budget:
-            # 兜底：摘要超长时保住开头（话题在摘要开头），丢掉后面
-            return summary[:budget]
-        parts.append(summary)
-        budget -= len(summary) + 1
+        parts.append(summary[:summary_budget])
 
-    # 最近对话区：只占用剩余预算，从尾部保留完整行
+    # 最近对话区：只占用属于它的那份预算，从尾部保留完整行
     kept = []   # 倒序收集被保留的行
     total = 0
     for line in reversed(recent_lines):
         cost = len(line) + 1  # +1 算换行符
-        if total + cost > budget:
+        if total + cost > recent_budget:
             if kept:
                 break              # 再加就超预算了，丢掉更旧的行
-            kept.append(line[:budget - total])  # 单条就超长：硬切这一行兜底
-            total = budget
+            # 单条就超长（极端情况）：硬切这一行兜底，不然它一行都挤不进来
+            kept.append(line[:max(recent_budget - total, 0)])
+            total = recent_budget
             break
         kept.append(line)
         total += cost
     return "\n".join(parts + list(reversed(kept)))
+
 
 
 

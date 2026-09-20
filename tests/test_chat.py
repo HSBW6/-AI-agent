@@ -35,9 +35,13 @@ class FakeAgent:
         self.fail = False
         self.reply = reply
 
-    def say(self, transcript_text, extra_instruction="", max_tokens=None):
+    # 签名必须与真 Agent.say 对齐（3.1/3.2 新增了 stop_event / on_warning），
+    # 否则 run_discussion 传关键字参数时会 TypeError，被 except 吞成"发言失败"
+    def say(self, transcript_text, extra_instruction="", max_tokens=None,
+            stop_event=None, on_warning=None):
         FakeAgent.last_input = transcript_text
         FakeAgent.history.append((self.name, transcript_text))
+
         if self.fail:
             raise RuntimeError("模拟 API 故障")
         if self.reply is not None:
@@ -184,9 +188,12 @@ class TranscriptTextTest(unittest.TestCase):
         self.assertIn("话题：x", out)
 
     def test_overlong_summary_keeps_head_only(self):
+        """3.5 新契约：摘要最多占 60% 预算（4000 → 2400），不再"独占整份预算" """
         out = chat.transcript_text("话" * 4100, ["A：内容"])
-        self.assertEqual(len(out), 4000)
-        self.assertTrue(out.startswith("话"))
+        self.assertEqual(len(out), 2400 + 1 + len("A：内容"))  # 摘要 2400 + 换行 + 最近行
+        self.assertTrue(out.startswith("话"))                   # 保头：话题在摘要开头
+        self.assertIn("A：内容", out)                           # 摘要再长也挤不掉原话
+
 
     def test_summary_plus_recent_within_budget(self):
         out = chat.transcript_text("摘" * 200, ["A：" + "长" * 100, "B：" + "短" * 100])

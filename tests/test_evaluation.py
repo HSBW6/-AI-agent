@@ -354,9 +354,8 @@ class TestSuitesExtensionTest(unittest.TestCase):
             ev.TEST_SUITES.pop("_demo_reverse", None)
 
 
-if __name__ == "__main__":
-    unittest.main()
 class ProcessTreeKillTest(unittest.TestCase):
+
     """超时杀进程树：必须连孙进程一起杀，不留孤儿"""
 
     def test_terminate_process_tree_kills_grandchild(self):
@@ -399,3 +398,7 @@ class ProcessTreeKillTest(unittest.TestCase):
                     ["taskkill", "/PID", str(grandchild_pid), "/T", "/F"],
                     capture_output=True,
                 )
+
+if __name__ == "__main__":
+    unittest.main()
+
