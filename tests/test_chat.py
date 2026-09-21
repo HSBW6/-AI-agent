@@ -201,6 +201,20 @@ class TranscriptTextTest(unittest.TestCase):
         self.assertTrue(out.startswith("摘"))
         self.assertIn("短", out)   # 最近行仍在
 
+    def test_no_summary_gives_full_budget_to_recent(self):
+        """任务3：没有摘要时，整份预算都该给原话（曾被写死的 1600 饿死）"""
+        lines = ["角色%d：%s" % (i, "行" * 200) for i in range(1, 30)]
+        out = chat.transcript_text(None, lines)
+        self.assertGreaterEqual(len(out), 3500)
+        self.assertLessEqual(len(out), 4000)
+
+    def test_short_summary_gives_leftover_to_recent(self):
+        """任务3：摘要只占 100 字时，剩余预算归原话，而不是固定 1600"""
+        lines = ["角色%d：%s" % (i, "行" * 200) for i in range(1, 30)]
+        out = chat.transcript_text("摘" * 100, lines)
+        self.assertGreaterEqual(len(out), 3400)
+        self.assertLessEqual(len(out), 4000)
+
 
 class UpdateSummaryTest(unittest.TestCase):
     def test_overlong_old_summary_kept_at_head(self):

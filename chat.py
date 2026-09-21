@@ -304,24 +304,31 @@ def transcript_text(summary, recent_lines):
     """把 (滚动摘要, 最近原始行) 拼成喂给模型的上下文。
 
     拼接顺序：摘要在前（跨轮记忆），最近对话在后（本轮现场）。
-    预算分配（3.5）：摘要最多占 MAX_TRANSCRIPT_LEN 的 60%，剩下 40% 硬性留给
-    recent_lines（按"完整行"从尾部保留）。以前摘要"不占预算"，一旦记录员不听话
-    把摘要写长，就会把原话挤到一行不剩——参与者全在看二手摘要、看不到任何原始发言。
-    现在两边都保底：摘要把原话挤不没，原话也把跨轮记忆挤不没。
+    预算分配（3.5 + 任务3）：摘要最多占 MAX_TRANSCRIPT_LEN 的 60%，而 40% 是
+    recent_lines（按"完整行"从尾部保留）的"上限"而非"定额"——摘要没吃满的余量
+    必须还给原话。以前摘要"不占预算"，一旦记录员不听话把摘要写长，就会把原话挤到
+    一行不剩；3.5 补了 60% 上限，但 recent_budget 被写死成 max_len - 60%
+    （4000 → 1600），摘要为空或只有 100 字时照样饿着原话（实测 summary=None 只输出
+    1441 字符、100 字摘要只有 1542 字符，而预算本可到 4000）。现在两边都保底：
+    摘要把原话挤不没，原话也把跨轮记忆挤不没。
     保留老逻辑语义：不能从行中间切开喂模型（实测复现残句）。
     """
     max_len = config.MAX_TRANSCRIPT_LEN
-    # 3.5 预算切分：摘要最多吃 60%，剩下 40% 硬性留给"最近原话"。
-    # 以前摘要"不占预算"，一旦记录员把摘要写长，recent_lines 会被挤到一行不剩——
-    # 参与者全在看二手摘要、看不到原始发言，讨论质量直接塌方。
+    # 3.5 预算切分：摘要最多吃 60%（上限，不是定额）。
+    # 以前 recent_budget 写死成 max_len - summary_budget，摘要再短也不还余量，
+    # 结果"摘要没吃满却在饿着原话"（GUI 5 轮实测会丢最早 1~2 条发言）。
     summary_budget = int(max_len * 0.6)
-    recent_budget = max_len - summary_budget
 
     parts = []
     # 摘要区：正常远小于预算，直接全留；真超了从尾部砍
     #（话题锚点固定躺在摘要开头，所以砍尾巴、保脑袋）
     if summary:
-        parts.append(summary[:summary_budget])
+        kept_summary = summary[:summary_budget]
+        parts.append(kept_summary)
+        # 摘要没吃满 → 余量归原话（-1 是摘要与原话之间的那个换行）
+        recent_budget = max_len - len(kept_summary) - 1
+    else:
+        recent_budget = max_len
 
     # 最近对话区：只占用属于它的那份预算，从尾部保留完整行
     kept = []   # 倒序收集被保留的行
