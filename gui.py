@@ -26,6 +26,47 @@ DEFAULT_TOPIC = chat_mod.DEFAULT_TOPIC
 # 代码验证下拉的哨兵项：与 _resolve_verify 一一对应
 AUTO_SUITE_LABEL = "自动识别"
 NO_VERIFY_LABEL = "不验证"
+
+
+def resolve_verify_choice(choice):
+    """下拉选择 → run_discussion 的 (verify_code, verify_suite)。纯函数，便于单测。
+
+    契约（三项 + 一条兜底）：
+      「不验证」   → (False, None)：完全不跑验证，也不会产生 on_verification 事件
+      「自动识别」 → (True, None)：按题面自动挑套件，拿不准则 skipped（不假红/假绿）
+      套件 label   → (True, 套件 key)：锁定该套件
+      未知选项     → (True, None)：兜底按自动处理（下拉项由 _suite_choices 生成，正常到不了）
+    """
+    if choice == NO_VERIFY_LABEL:
+        return False, None
+    if choice == AUTO_SUITE_LABEL:
+        return True, None
+    for name, suite in evaluation.TEST_SUITES.items():
+        if suite["label"] == choice:
+            return True, name
+    return True, None
+
+
+def widget_state(running):
+    """讨论进行中，"参数已读取、再改也不生效"的控件该设的 state。纯函数，便于单测。
+
+    轮数 Spinbox 与套件下拉的值在 _start 时一次性读走，讨论中再改看着生效、
+    其实不生效（假可交互），所以运行期间统一置灰。
+    """
+    return "disabled" if running else "normal"
+
+
+def no_verify_hint(verify_enabled, choice=NO_VERIFY_LABEL):
+    """选「不验证」时该往最终总结区追加的灰字提示；启用了验证则返回空串。
+
+    为什么需要：verify_code=False 不会产生 on_verification 事件，最终总结区
+    只剩总结正文、验证部分一片空白，用户会以为验证功能坏了。纯函数，便于单测。
+    """
+    if verify_enabled:
+        return ""
+    return f"本次未启用代码验证（下拉选择：{choice}）\n"
+
+
 # 参与者阵容 / 总结者厂商 / hooks 事件名清单：单一来源在 chat.py（DEFAULT_PARTICIPANTS /
 # DEFAULT_SUMMARIZER_PROVIDER / HOOK_EVENT_NAMES），GUI 只 import 不重抄，防止双份漂移。
 PARTICIPANTS = chat_mod.DEFAULT_PARTICIPANTS
@@ -43,6 +84,9 @@ class MultiAgentGUI:
         self._waiting = None             # (rnd, name) 当前正在等待的角色
         self._waiting_since = None       # time.monotonic() 开始等待的时刻
         self._last_shown_sec = -1        # 上次状态栏展示的等待秒数（避免无谓刷新）
+        # 本次运行的代码验证选择快照（_start 时写入）：done 事件据此决定要不要补提示
+        self._verify_enabled = True      # 默认与下拉初值「自动识别」一致
+        self._verify_choice = AUTO_SUITE_LABEL
         self._build_ui()
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         # 主线程轮询队列刷新界面（不阻塞 UI）
@@ -75,9 +119,12 @@ class MultiAgentGUI:
         # 讨论轮数选择器：默认值 / 范围来自 config.py 集中常量（改默认轮数只改 config.py 一处）
         tk.Label(ctrl, text="讨论轮数:", fg="#333333").pack(side="left", padx=(12, 2))
         self.rounds_var = tk.IntVar(value=config.GUI_DEFAULT_MAX_ROUNDS)
-        tk.Spinbox(ctrl, from_=config.GUI_ROUNDS_MIN, to=config.GUI_ROUNDS_MAX,
-                   textvariable=self.rounds_var, width=3,
-                   justify="center").pack(side="left")
+        # 存成属性：讨论期间要连同套件下拉一起置灰（这两个值在 _start 已读走）
+        self.rounds_spin = tk.Spinbox(ctrl, from_=config.GUI_ROUNDS_MIN,
+                                      to=config.GUI_ROUNDS_MAX,
+                                      textvariable=self.rounds_var, width=3,
+                                      justify="center")
+        self.rounds_spin.pack(side="left")
         tk.Label(ctrl, text="代码验证:", fg="#333333").pack(side="left", padx=(12, 2))
         self.suite_var = tk.StringVar(value=AUTO_SUITE_LABEL)
         self.suite_menu = tk.OptionMenu(ctrl, self.suite_var, *self._suite_choices())
@@ -162,9 +209,14 @@ class MultiAgentGUI:
         w.config(state="disabled")
 
     def _set_running(self, running):
-        self.start_btn.config(state="disabled" if running else "normal")
+        state = widget_state(running)
+        self.start_btn.config(state=state)
         self.stop_btn.config(state="normal" if running else "disabled")
-        self.topic_text.config(state="disabled" if running else "normal")
+        self.topic_text.config(state=state)
+        # 轮数 / 套件下拉也一并置灰：它们的值在 _start 时已传给后台线程，
+        # 讨论中再改看着生效、其实不生效（假可交互）
+        self.rounds_spin.config(state=state)
+        self.suite_menu.config(state=state)
 
     def _suite_choices(self):
         """下拉项：自动识别 / 各套件 label / 不验证"""
@@ -173,16 +225,11 @@ class MultiAgentGUI:
                 + [NO_VERIFY_LABEL])
 
     def _resolve_verify(self):
-        """下拉选择 → run_discussion 的 (verify_code, verify_suite)"""
-        choice = self.suite_var.get()
-        if choice == NO_VERIFY_LABEL:
-            return False, None
-        if choice == AUTO_SUITE_LABEL:
-            return True, None
-        for name, suite in evaluation.TEST_SUITES.items():
-            if suite["label"] == choice:
-                return True, name
-        return True, None   # 未知选项兜底按自动处理
+        """下拉选择 → run_discussion 的 (verify_code, verify_suite)
+
+        判定逻辑抽到模块级纯函数 resolve_verify_choice（可离线单测），此处只负责取值。
+        """
+        return resolve_verify_choice(self.suite_var.get())
 
 
     def _clear_outputs(self):
@@ -247,6 +294,10 @@ class MultiAgentGUI:
         self._append(self.chat_text, "系统：讨论开始，后台调用两家模型 API，界面实时刷新。\n", "system")
         self.stop_event = threading.Event()
         verify_code, verify_suite = self._resolve_verify()
+        # 快照本次选择：选「不验证」时不产生 on_verification 事件，
+        # done 事件要据此在最终总结区补一行说明（见 no_verify_hint）
+        self._verify_enabled = verify_code
+        self._verify_choice = self.suite_var.get()
         self.worker = threading.Thread(
             target=self._worker_run,
             args=(topic, max_rounds, verify_code, verify_suite),
@@ -377,6 +428,11 @@ class MultiAgentGUI:
                 self._append(self.chat_text, "系统：讨论已手动停止，未生成最终总结。\n", "system")
                 self.status_var.set("已停止")
             else:
+                # 选「不验证」时没有 on_verification 事件，最终总结区只剩总结正文，
+                # 验证区一片空白会被当成"功能坏了" —— 补一行灰字说明本次没跑验证
+                hint = no_verify_hint(self._verify_enabled, self._verify_choice)
+                if hint:
+                    self._append(self.final_text, hint, "meta")
                 self.status_var.set("讨论完成 ✓")
 
     def _on_close(self):
