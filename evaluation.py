@@ -156,17 +156,22 @@ assert args[0][i] + args[0][j] == args[1], (
 
 
 def _long_two_sum_nums():
-    """性能边界输入：前 4000 个偶数的数组 + 末尾两个大奇数。
+    """性能边界输入：前 12000 个偶数的数组 + 末尾两个大奇数（共 12002 个元素）。
 
-    线性哈希解法毫秒级通过；O(n^2) 暴力法在此用例上明显变慢，
-    配合子进程 timeout 能筛掉明显低效实现。
+    线性哈希解本机实测 0.05~0.06s 通过；O(n^2) 暴力解实测 2.21~2.29s（连跑 3 次），
+    稳定超过本用例 time_limit=2 秒——筛掉暴力解靠的是用例级限时（结果正确但超时
+    同样判失败），全局 timeout=15 只兜死循环。12000 的限时余量约 10%，换明显更快
+    的机器需重新校准规模；20000 规模实测单例 6.09s，拖慢整轮验证，故不取。
+    答案被刻意放在数组最后两位：暴力解必须扫完全表才命中。
     """
-    nums = list(range(2, 8002, 2))       # 4000 个偶数
-    nums += [1_000_003, 1_000_005]       # 两个大奇数在末尾
-    return nums, 2_000_008               # 1_000_003 + 1_000_005
+    nums = list(range(2, 24002, 2))       # 12000 个偶数
+    nums += [1_000_003, 1_000_005]        # 两个大奇数在末尾
+    return nums, 2_000_008                # 1_000_003 + 1_000_005
 
 
 # 默认题目用例套件（run_code_verification / chat.run_discussion 的 verify_suite 共用）
+# 用例字典字段：name / args / checker 必填；可选 time_limit（秒）——断言全通过但
+# 单例耗时超过该值同样判失败（用于筛掉结果对但复杂度不达标的解法），缺省不启用。
 DEFAULT_SUITE = "two_sum"
 
 TEST_SUITES = {
@@ -187,8 +192,8 @@ TEST_SUITES = {
              "checker": "two_sum_indices"},
             {"name": "边界·负数参与命中", "args": [[-3, 4, 3, 90], 0],
              "checker": "two_sum_indices"},
-            {"name": "性能边界·4000+ 长数组尾部命中", "args": _long_two_sum_nums(),
-             "checker": "two_sum_indices"},
+            {"name": "性能边界·12000 长数组尾部命中", "args": _long_two_sum_nums(),
+             "checker": "two_sum_indices", "time_limit": 2},
         ],
     },
 }
@@ -272,11 +277,17 @@ def validate_suite(suite_name):
 # 4. 子进程 runner：受限执行用户代码 + 逐用例断言
 # ---------------------------------------------------------------------------
 
-# runner 以特权身份运行（自身可 import json/sys），只有"用户代码"被 exec 进受限
+# runner 以特权身份运行（自身可 import json/sys/time），只有"用户代码"被 exec 进受限
 # 命名空间。payload（含用户代码与用例）通过 stdin 传入，避免超长命令行参数；
 # 结果通过 stdout 上的哨兵包裹 JSON 回传。
 _RUNNER_SCRIPT = r"""
-import json, sys, builtins as _b
+import json, sys, time, builtins as _b
+
+
+class _CaseTimeLimit(Exception):
+    # 用例级限时被突破（结果对但太慢）：单独成类，便于与"断言失败"区分并报出实际耗时
+    pass
+
 
 def _main():
     out = {"ok": False, "tests": [], "error": None, "function": None}
@@ -357,6 +368,8 @@ def _main():
     all_ok = True
     for _case in _cases:
         _tr = {"name": _case["name"], "passed": False, "detail": ""}
+        _limit = _case.get("time_limit")
+        _t0 = time.perf_counter() if _limit is not None else None
         try:
             _result = fn(*_case["args"])
             _tpl = checkers.get(_case["checker"], "")
@@ -364,9 +377,18 @@ def _main():
                 raise RuntimeError(f"缺少校验模板: {_case['checker']}")
             _loc = {"result": _result, "args": _case["args"]}
             exec(compile(_tpl, "<checker>", "exec"), _loc, _loc)
+            if _limit is not None:
+                _elapsed = time.perf_counter() - _t0
+                if _elapsed > _limit:
+                    raise _CaseTimeLimit(
+                        f"超出用例限时: 限时 {_limit:g}s，实际耗时 {_elapsed:.2f}s"
+                        "（结果正确但性能不达标）"
+                    )
             _tr["passed"] = True
         except AssertionError as _e:
             _tr["detail"] = f"断言失败: {_e}" if str(_e) else "断言失败"
+        except _CaseTimeLimit as _e:
+            _tr["detail"] = str(_e)
         except Exception as _e:
             _tr["detail"] = f"{type(_e).__name__}: {_e}"
         all_ok = all_ok and _tr["passed"]
@@ -441,7 +463,9 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
     参数：
       summary_text    总结者输出全文（从中解析 ```python 代码块）
       suite_name      题目用例套件 key（见 TEST_SUITES，扩展新题在此加）
-      timeout         子进程执行总超时（秒），防止死循环拖垮调用方
+      timeout         子进程执行总超时（秒），只兜死循环；单例性能门槛由套件里
+                      各用例自己的可选 time_limit 字段控制（断言全过但超时同样
+                      判该用例失败）
        use_last_block  多块都没命中解题函数时的兜底：True 取最后一块，False 取
                       第一块（默认 True）。命中 function_names/class_names 的块
                       始终优先，不受此开关影响
