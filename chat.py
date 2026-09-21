@@ -1,7 +1,6 @@
 """Multi-Agent 互聊主程序：不同模型的两个角色轮流发言 + 总结收尾 + 代码评测闭环"""
 import config
 from evaluation import (
-    DEFAULT_SUITE,
     ensure_utf8_stdio,          # 新增：统一父子进程的 stdout/stderr 为 UTF-8
     format_verification,
     run_code_verification,
@@ -49,7 +48,7 @@ def run_discussion(
     summarizer_provider=DEFAULT_SUMMARIZER_PROVIDER,
     use_running_summary=True, summary_max_len=500,
     hooks=None, stop_event=None, verbose=True,
-    verify_code=False, verify_suite=DEFAULT_SUITE,
+    verify_code=False, verify_suite=None,
 ):
     """让参与者围绕话题轮流发言，最后总结者收尾。
 
@@ -85,8 +84,12 @@ def run_discussion(
                           执行并跑题目用例断言（评测闭环），结果经
                           on_verification 回调 + verbose 打印，不影响返回值；
                           False=不做验证（默认，保证旧行为/旧事件序列不变）
-      verify_suite        题目用例套件名（evaluation.TEST_SUITES 的 key），
-                          默认 evaluation.DEFAULT_SUITE（"two_sum"），
+      verify_suite        题目用例套件名（evaluation.TEST_SUITES 的 key）；
+                          默认 None = 自动模式：按题面调 evaluation.pick_suite()
+                          自动挑套件，挑不准则 skipped（不猜、不假红，属启发式
+                          识别而非精确判定）；显式传套件名则钉死该套件——
+                          不传默认值的调用方因此不会再被迫落到 "two_sum"
+                          （旧默认值曾导致"非两数之和题被 fake red"）；
                           新题目在 evaluation.py 扩展
     """
     # GUI 复用接口（见 docstring hooks）：事件回调 + 输出开关

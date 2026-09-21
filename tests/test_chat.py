@@ -261,6 +261,11 @@ class RunDiscussionVerificationTest(unittest.TestCase):
 
     verify_code 默认 False（不改变旧事件序列/返回值契约），仅在显式开启时
     增加 on_verification——本组测试全部显式开启。
+
+    verify_suite 默认 None（自动按题面挑套件），而本组测试的 topic 是占位符
+    "题"，自动模式挑不到套件会 skipped，故一律显式传 verify_suite="two_sum"，
+    把被测对象钉在"套件内的判定语义"上（自动挑套件的行为由
+    test_evaluation.py 覆盖）。
     """
 
     GOOD_CODE = (
@@ -293,7 +298,7 @@ class RunDiscussionVerificationTest(unittest.TestCase):
         result = chat.run_discussion(
             topic="题", participant_names=PARTICIPANTS, max_rounds=1,
             use_running_summary=False, verbose=False, hooks=hooks,
-            verify_code=True)
+            verify_code=True, verify_suite="two_sum")
         self.assertEqual(result, reply)          # 返回值契约不变：仍是总结 str
         seq = rec.types()
         self.assertIn("on_finish", seq)
@@ -313,7 +318,7 @@ class RunDiscussionVerificationTest(unittest.TestCase):
         chat.run_discussion(
             topic="题", participant_names=PARTICIPANTS, max_rounds=1,
             use_running_summary=False, verbose=False, hooks=hooks,
-            verify_code=True)
+            verify_code=True, verify_suite="two_sum")
         v = next(kw for t, kw in rec.events if t == "on_verification")
         self.assertFalse(v["passed"])
         self.assertEqual(v["status"], "fail")
@@ -329,7 +334,7 @@ class RunDiscussionVerificationTest(unittest.TestCase):
         chat.run_discussion(
             topic="题", participant_names=PARTICIPANTS, max_rounds=1,
             use_running_summary=False, verbose=False, hooks=hooks,
-            verify_code=True)
+            verify_code=True, verify_suite="two_sum")
         v = next(kw for t, kw in rec.events if t == "on_verification")
         self.assertFalse(v["passed"])
         self.assertEqual(v["status"], "no_code")
@@ -352,7 +357,8 @@ class RunDiscussionVerificationTest(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             chat.run_discussion(topic="题", participant_names=PARTICIPANTS,
                                 max_rounds=1, use_running_summary=False,
-                                verbose=True, hooks=None, verify_code=True)
+                                verbose=True, hooks=None, verify_code=True,
+                                verify_suite="two_sum")
         out = buf.getvalue()
         self.assertIn("代码验证", out)
         self.assertIn("✓", out)
