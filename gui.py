@@ -215,9 +215,11 @@ class MultiAgentGUI:
                                  f"  ·「{t.get('name')}」{t.get('detail') or '断言失败'}\n",
                                  "verify_detail")
         elif status == "skipped":
-            # 自动识别没匹配到套件：灰字中性提示，不当作失败
+            # 自动识别没匹配到套件：灰字中性提示，不当作失败。
+            # 此时 suite_label 可能为空（题目已知、只是没注册套件），别硬贴"代码"前缀
+            prefix = f"{msg.get('suite_label')}：" if msg.get("suite_label") else ""
             self._append(self.final_text, sep, "meta")
-            self._append(self.final_text, f"[代码验证 -] {label}：{error}\n", "meta")
+            self._append(self.final_text, f"[代码验证 -] {prefix}{error}\n", "meta")
         else:
             # no_code / error / timeout：直接展示原因
             self._append(self.final_text, sep, "meta")

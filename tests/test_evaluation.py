@@ -551,6 +551,37 @@ class PickSuiteTest(unittest.TestCase):
         self.assertIsNone(ev.pick_suite(topic))
 
 
+class SkippedRenderingTest(unittest.TestCase):
+    """任务 6：自动模式跳过验证时的渲染文案（对应验收脚本 T6a）。
+
+    背景：skipped 的真实原因是"没给这个题目注册用例套件"，题目本身是已知的。
+    旧实现复用 _UNKNOWN_LABEL（"未知题目"）当标签，CLI 输出成
+    "[代码验证 -] 未知题目：未匹配到该题目的用例套件，已跳过代码验证"，属臆断误导。
+    """
+
+    @staticmethod
+    def _skipped():
+        """构造一个真实的 skipped 结果：不传套件（自动模式）"""
+        return ev.run_code_verification(
+            wrapped("def two_sum(nums, target):\n    return [0, 1]\n"),
+            suite_name=None)
+
+    def test_cli_rendering_says_no_suite_registered(self):
+        """CLI 渲染不得出现"未知题目"，且要说清"未注册套件故跳过"（T6a）"""
+        r = self._skipped()
+        self.assertEqual(r.status, "skipped")
+        cli_text = ev.format_verification(r)
+        self.assertNotIn("未知题目", cli_text)
+        self.assertIn("未注册该题目的用例套件", cli_text)
+        self.assertIn("已跳过代码验证", cli_text)
+
+    def test_skipped_suite_label_is_empty(self):
+        """skipped 的 suite_label 留空：标签该由渲染层决定，而不是硬塞兜底文案"""
+        r = self._skipped()
+        self.assertEqual(r.suite_label, "")
+        self.assertNotIn("：", ev.format_verification(r))   # 空标签时不该出现悬空"标签："
+
+
 if __name__ == "__main__":
     unittest.main()
 

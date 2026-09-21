@@ -198,7 +198,9 @@ TEST_SUITES = {
     },
 }
 
-# 找不到套件时的兜底
+# 找不到套件时的兜底标签：**仅**用于"显式传了未注册套件名"这条开发者错误路径
+# （下面 run_code_verification 里 suite is None 的 error 分支）。自动模式没匹配到套件
+# 走 status="skipped"，不复用它——那类场景题目是已知的，说"未知题目"属误导。
 _UNKNOWN_LABEL = "未知题目"
 
 
@@ -511,11 +513,14 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
     """
 
     if suite_name is None:
-        # 自动模式没匹配到套件：中性跳过，不算失败
+        # 自动模式没匹配到套件：中性跳过，不算失败。
+        # 注意：这里**不能**复用 _UNKNOWN_LABEL（"未知题目"）——题目本身是已知的，
+        # 只是没给它注册用例套件；说成"未知题目"属臆断误导。文案改成完整句式说清
+        # 因果，suite_label 留空，由 CLI/GUI 渲染层自行决定要不要贴标签前缀。
         return VerificationResult(
             passed=False, status="skipped", code=None,
-            error="未匹配到该题目的用例套件，已跳过代码验证",
-            suite_label=_UNKNOWN_LABEL,
+            error="未注册该题目的用例套件，已跳过代码验证（可继续讨论，不影响结论）",
+            suite_label="",
         )
     suite = get_suite(suite_name)
     label = suite["label"] if suite else _UNKNOWN_LABEL
@@ -666,6 +671,14 @@ def format_verification(result):
 
     返回带换行的字符串；通过/失败用 ✓/✗ 直观区分。
     """
+    if result.status == "skipped":
+        # 用 ASCII '-' 保持中性，别让人误以为判失败。
+        # 自动模式没匹配到套件时 suite_label 为空，此时不贴标签前缀，更不许回退成
+        # _UNKNOWN_LABEL（"未知题目"）——题目是已知的，只是没注册套件，属误导。
+        detail = result.error or "已跳过代码验证"
+        prefix = f"{result.suite_label}：" if result.suite_label else ""
+        return f"[代码验证 -] {prefix}{detail}"
+
     label = result.suite_label or _UNKNOWN_LABEL
     lines = []
     if result.status == "pass":
@@ -673,10 +686,6 @@ def format_verification(result):
         lines.append(f"[代码验证 ✓] {label}：{n}/{n} 用例通过"
                      + (f"（命中函数 {result.function}）" if result.function else ""))
         return "\n".join(lines)
-
-    if result.status == "skipped":
-        # 用 ASCII '-' 保持中性，别让人误以为判失败
-        return f"[代码验证 -] {label}：{result.error or '已跳过代码验证'}"
 
 
     lines.append(f"[代码验证 ✗] {label}：")
