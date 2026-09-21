@@ -13,14 +13,75 @@
   - TEST_SUITES 默认两数之和套件结构与可扩展性（新增题目在 TEST_SUITES 加 key）
   - validate_suite 父进程预校验（批次 1.2）：空套件 / args 非 list / checker
     缺失都必须被拦成 status="error"，绝不放行出"假 pass"
+  - 用例级 time_limit（任务 2）：结果正确但超限判该用例 fail 并报出实际耗时；
+    限时内完成仍 pass（延时用纯计算循环制造，沙箱禁 __import__）
 
 注意：run_code_verification 每次真实启动一个受限子进程（毫秒级），
 本文件刻意不 mock，保证"离线单测也在验证真实沙箱管线"。
 """
+import os
+import signal
+import subprocess
+import sys
 import textwrap
+import time
 import unittest
 
 import evaluation as ev
+
+
+
+
+
+# --- 进程存活探测（批次 5.1②）---------------------------------------------
+def _is_pid_alive(pid):
+    """跨平台判断某个 pid 是否还活着。
+
+    坑：Windows 上 os.kill(pid, 0) 不是 POSIX 那句"只探测、不真发信号"——
+    CPython 在 Windows 走的是 OpenProcess + TerminateProcess，那个 0 会被当成
+    退出码，等于顺手把目标进程强杀了（想探测却杀人）。原先这条用例能过属于"恰好"。
+    所以：Windows 改用 tasklist 查询，POSIX 才用 os.kill(pid, 0)。
+    """
+    pid = int(pid)
+    if os.name == "nt":
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True,
+        ).stdout
+        # 逐行解析第 2 列（PID）。不要图省事写 `str(pid) in out`：
+        # 查 123 会误命中 1234，也会撞上"内存占用"列里的数字
+        for line in out.splitlines():
+            parts = [c.strip().strip('"') for c in line.split(",")]
+            if len(parts) >= 2 and parts[1] == str(pid):
+                return True
+        return False
+    try:
+        os.kill(pid, 0)          # POSIX：信号 0 仅做存在性/权限检查，不真发信号
+    except OSError:
+        return False
+    return True
+
+def _wait_pid_gone(pid, timeout=2.0, interval=0.1):
+    """轮询等待 pid 消失：taskkill 是异步生效的，杀完立刻断言会偶发翻红。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _is_pid_alive(pid):
+            return True
+        time.sleep(interval)
+    return not _is_pid_alive(pid)    # 最后再探一次，避免刚好卡在边界上
+
+def _force_kill_pid(pid):
+    """兜底清理：万一孙进程还活着就强杀，绝不留孤儿污染本机。"""
+    if not _is_pid_alive(pid):
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    else:
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
 
 FENCE = "```python\n{code}\n```"
 
@@ -72,12 +133,15 @@ class RunVerificationTest(unittest.TestCase):
         self.assertIn("两数之和", r.suite_label)
 
     def test_camel_case_twoSum_passes(self):
+        # 示例解用线性哈希：避免被性能用例的 20000 长数组拖到超时（O(n^2) 会被 time_limit=2 筛掉）
         code = wrapped("""
             def twoSum(nums, target):
-                for i in range(len(nums)):
-                    for j in range(i + 1, len(nums)):
-                        if nums[i] + nums[j] == target:
-                            return [i, j]
+                seen = {}
+                for i, v in enumerate(nums):
+                    rest = target - v
+                    if rest in seen:
+                        return [seen[rest], i]
+                    seen[v] = i
         """)
         r = ev.run_code_verification(code)
         self.assertTrue(r.passed, msg=r.error)
@@ -359,11 +423,6 @@ class ProcessTreeKillTest(unittest.TestCase):
     """超时杀进程树：必须连孙进程一起杀，不留孤儿"""
 
     def test_terminate_process_tree_kills_grandchild(self):
-        import os
-        import subprocess
-        import sys
-        import time
-
         # 子进程：先 spawn 一个"孙进程"，再自己进入死循环
         child_code = (
             "import subprocess, sys, time\n"
@@ -372,32 +431,93 @@ class ProcessTreeKillTest(unittest.TestCase):
             "while True:\n"
             "    time.sleep(1)\n"
         )
-        child = subprocess.Popen(
+        # 用 with 托管 Popen：退出时自动 close 掉 stdout/stderr 管道并 wait，
+        # 消掉原来那几条 ResourceWarning: unclosed file（批次 5.1②）
+        with subprocess.Popen(
             [sys.executable, "-c", child_code],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-        grandchild_pid = int(child.stdout.readline().strip())   # 等子进程报出孙进程 pid
+        ) as child:
+            grandchild_pid = int(child.stdout.readline().strip())   # 等子进程报出孙进程 pid
 
-        try:
-            ev._terminate_process_tree(child)   # 模拟"超时杀进程树"
-            child.wait(timeout=5)
-            time.sleep(0.5)                     # 给 taskkill 一点生效时间
-            # 孙进程应已被连坐：对它发信号 0 会报"进程不存在"（OSError 系）
-            with self.assertRaises(OSError):
-                os.kill(grandchild_pid, 0)
-        finally:
-            if child.poll() is None:
-                child.kill()
             try:
-                os.kill(grandchild_pid, 0)
-            except OSError:
-                pass
-            else:
-                # 兜底：万一孙进程还活着就手动清掉，别污染本机
-                subprocess.run(
-                    ["taskkill", "/PID", str(grandchild_pid), "/T", "/F"],
-                    capture_output=True,
+                ev._terminate_process_tree(child)      # 模拟"超时杀进程树"
+                child.wait(timeout=5)
+                # 不再用 os.kill(pid, 0) 探测（Windows 上那是"杀"不是"探"），
+                # 改跨平台探测 + 轮询 2s 等 taskkill 连坐生效
+                self.assertTrue(
+                    _wait_pid_gone(grandchild_pid, timeout=2.0),
+                    f"孙进程 {grandchild_pid} 仍存活：杀进程树没有连坐孙进程",
                 )
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                _force_kill_pid(grandchild_pid)        # 兜底，绝不污染本机
+
+
+class CaseTimeLimitTest(unittest.TestCase):
+    """任务 2（批次 5.3 配套）：用例级 time_limit 机制的单测。
+
+    背景：time_limit 是性能用例（two_sum 的 12000 长数组）唯一的筛子，此前零覆盖
+    ——正因为没测，才让"性能用例撞 15s 全局超时、time_limit 从不生效"溜到验收阶段。
+    本类钉住两条路径：超限判 fail、限时内仍 pass。
+
+    两条刻意的取舍：
+      - 不用真实 O(n^2) 来测（慢，且结果随机器漂移），改在受测代码里塞"纯计算循环"
+        制造可控耗时；断言只看 status 与文案，**不比对具体秒数**（绝对计时必然脆弱）；
+      - 沙箱禁 __import__，受测代码里写 time.sleep 会直接 ImportError（实测报 error），
+        所以延时只能用循环，不能用睡。
+    """
+
+    LIMIT = 0.05             # 阈值是配置值而非实测值；下方循环量约为它的 5 倍
+    BUSY_LOOPS = 30_000_000  # 本机沙箱内实测该循环约 0.25s，足以稳定越过 LIMIT
+
+    @staticmethod
+    def _suite(time_limit):
+        return {
+            "label": "演示·用例限时",
+            "function_names": ["slow_sum"],
+            "checkers": {"expect_three": "assert result == 3"},
+            "cases": [{"name": "限时用例", "args": [[1, 2]],
+                       "checker": "expect_three", "time_limit": time_limit}],
+        }
+
+    def test_slow_but_correct_solution_judged_failed(self):
+        """限时命中：结果正确但超限 → 该用例 fail（不是 pass，也不是 error/timeout）"""
+        ev.TEST_SUITES["_slow_case"] = self._suite(self.LIMIT)
+        try:
+            code = wrapped(f"""
+                def slow_sum(nums):
+                    for _ in range({self.BUSY_LOOPS}):
+                        pass
+                    return sum(nums)
+            """)
+            r = ev.run_code_verification(code, suite_name="_slow_case")
+            self.assertFalse(r.passed)
+            self.assertEqual(r.status, "fail")
+            self.assertFalse(r.tests[0].passed)
+            detail = r.tests[0].detail
+            self.assertIn("超出用例限时", detail)   # 与"断言失败"区分开
+            self.assertIn("实际耗时", detail)       # 必须报出真实耗时，便于定位
+        finally:
+            ev.TEST_SUITES.pop("_slow_case", None)
+
+    def test_fast_solution_within_limit_passes(self):
+        """限时未命中（护栏）：限时内完成的正确解仍判 pass，且不带任何限时抱怨"""
+        ev.TEST_SUITES["_fast_case"] = self._suite(1)
+        try:
+            code = wrapped("""
+                def slow_sum(nums):
+                    for _ in range(100000):     # 约 1ms，离 1s 限时极远
+                        pass
+                    return sum(nums)
+            """)
+            r = ev.run_code_verification(code, suite_name="_fast_case")
+            self.assertEqual(r.status, "pass")
+            self.assertTrue(r.tests[0].passed)
+            self.assertEqual(r.tests[0].detail, "")
+        finally:
+            ev.TEST_SUITES.pop("_fast_case", None)
+
 
 if __name__ == "__main__":
     unittest.main()
