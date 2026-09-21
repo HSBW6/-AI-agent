@@ -519,6 +519,38 @@ class CaseTimeLimitTest(unittest.TestCase):
             ev.TEST_SUITES.pop("_fast_case", None)
 
 
+class PickSuiteTest(unittest.TestCase):
+    """任务 5：pick_suite 只看标题区，正文"提及式"题面不许命中。
+
+    5 条用例对应验收脚本 T5a~T5d：1 条钉住误命中修复，3 条护栏防"修一个坏一个"，
+    另加 1 条钉住"标题是别的题、正文提及两数之和"的边界。
+    """
+
+    def test_mention_only_does_not_match(self):
+        """正文顺口提一句 ≠ 题面（T5a）"""
+        self.assertIsNone(ev.pick_suite("这题比两数之和难很多"))
+
+    def test_default_chinese_topic_matches(self):
+        """正常中文题面仍命中（T5b 护栏）；用 chat 的真实默认题面，防两份文案漂移"""
+        import chat    # 局部导入：本文件其余用例不依赖 chat，避免连带拉入 agent/openai
+        self.assertEqual(ev.pick_suite(chat.DEFAULT_TOPIC), "two_sum")
+
+    def test_english_topic_matches(self):
+        """英文题面仍命中（T5c 护栏）"""
+        self.assertEqual(ev.pick_suite("Two Sum - LeetCode 1"), "two_sum")
+
+    def test_other_topics_do_not_match(self):
+        """其它题目不误伤（T5d 护栏）；"三数之和"是近名题，不能靠子串蒙中"""
+        self.assertIsNone(ev.pick_suite("反转字符串（LeetCode 344）"))
+        self.assertIsNone(ev.pick_suite("三数之和（LeetCode 15）"))
+
+    def test_body_mention_ignored_when_title_is_another_topic(self):
+        """标题是别的题、正文提及两数之和 → 仍不命中（标题区之外一律不参与匹配）"""
+        topic = ("反转字符串（LeetCode 344）\n"
+                 "说明：本题比两数之和简单，two sum 的哈希做法不适用。")
+        self.assertIsNone(ev.pick_suite(topic))
+
+
 if __name__ == "__main__":
     unittest.main()
 

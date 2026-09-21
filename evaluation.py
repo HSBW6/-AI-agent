@@ -213,18 +213,54 @@ _AUTO_MATCH_HINTS = {
     "two_sum": ("两数之和", "two sum", "two_sum", "twosum", "2sum"),
 }
 
+# 题面"标题区"的判定：先剥掉"题目：/问题：/Task:"这类前缀标签，再截到第一个句读
+_TITLE_LABEL_RE = re.compile(r"^\s*(?:题目|问题|task|problem)\s*[:：]\s*", re.IGNORECASE)
+_TITLE_CUT_CHARS = "。！？；\n\r"
+
+
+def topic_title(topic):
+    """取题面的"标题区"（小写后返回）：第一个非空行 → 剥掉"题目："类前缀 →
+    截到第一个句读符号（。！？；）。
+
+    返回空串表示拿不到标题区（调用方按"拿不准"处理）。只看标题区是为了区分
+    "题面就是在讲这道题"（专名出现在标题里）与"正文顺口提一句"（如
+    "这题比两数之和难很多"，专名埋在正文里）——后者不该被认成该题。
+    """
+    for raw_line in (topic or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = _TITLE_LABEL_RE.sub("", line)
+        for idx, ch in enumerate(line):
+            if ch in _TITLE_CUT_CHARS:
+                line = line[:idx]
+                break
+        return line.strip().lower()
+    return ""
+
 
 def pick_suite(topic):
-    """按题目描述自动挑用例套件；拿不准返回 None（调用方应跳过验证，不猜）。
+    """按题面自动挑用例套件；拿不准返回 None（调用方应跳过验证，不猜）。
 
+    ⚠️ 这是启发式，不是精确识别。判定条件（先看标题区，正文一律不看）：
+      标题区中命中关键词，且满足其一——
+        ① 标题区**以关键词打头**（"两数之和（LeetCode 1）"、"Two Sum - LeetCode 1"）；
+        ② 标题区同时命中 **≥2 个不同关键词**。
+      因此像 "LeetCode 1: Two Sum" 这种"题号在前"的写法会漏判 —— 宁可漏成
+      skipped，也不猜错成假红/假绿。
     只认高置信专名，不放 target / 数组 这类泛词——避免给不相关题目
     硬套 two_sum 用例，把好代码判成"假红"。
     """
-    if not topic:
+    title = topic_title(topic)
+    if not title:
         return None
-    text = topic.lower()
     for suite_name, hints in _AUTO_MATCH_HINTS.items():
-        if suite_name in TEST_SUITES and any(h in text for h in hints):
+        if suite_name not in TEST_SUITES:
+            continue
+        hits = [h for h in hints if h in title]
+        if not hits:
+            continue
+        if len(hits) >= 2 or any(title.startswith(h) for h in hits):
             return suite_name
     return None
 
