@@ -1,4 +1,6 @@
 ﻿.env
 .venv/
+.venv.bak-*/
+.tmp_for_tests/
 __pycache__/
 *.pyc
