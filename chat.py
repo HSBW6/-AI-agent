@@ -230,7 +230,7 @@ def run_discussion(
     _out(f"总结者：{summary}")
     _emit("on_finish", summary=summary)
 
-    # 6.（评测闭环 · 交接文档 §10.3-1）总结者输出的代码不再"自嗨"：
+    # 6. 评测闭环：总结者输出的代码不再"自嗨"：
     #    解析 ```python 代码块 → 受限沙箱子进程执行 → 跑题目用例断言 →
     #    CLI/GUI 展示"代码验证 ✓/✗"。默认关闭，仅 CLI/GUI 入口显式开启，
     #    不改变 run_discussion 默认事件序列与返回值契约（str）。
