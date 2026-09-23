@@ -156,15 +156,33 @@ assert args[0][i] + args[0][j] == args[1], (
 
 
 def _long_two_sum_nums():
-    """性能边界输入：前 12000 个偶数的数组 + 末尾两个大奇数（共 12002 个元素）。
+    """性能边界输入：前 6000 个偶数的数组 + 末尾两个大奇数（共 6002 个元素）。
 
-    线性哈希解本机实测 0.05~0.06s 通过；O(n^2) 暴力解实测 2.21~2.29s（连跑 3 次），
-    稳定超过本用例 time_limit=2 秒——筛掉暴力解靠的是用例级限时（结果正确但超时
-    同样判失败），全局 timeout=15 只兜死循环。12000 的限时余量约 10%，换明显更快
-    的机器需重新校准规模；20000 规模实测单例 6.09s，拖慢整轮验证，故不取。
+    本机标定（Python 3.11.8，单例 **fn 内部**耗时）：
+      · 线性哈希解 ≈ 1~3ms（4000 与 6000 规模都报 0.00s，不随规模明显增长）
+      · O(n^2) 暴力解 ≈ 0.21s（4000）/ 0.49s（6000），随规模平方增长
+
+    筛掉暴力解靠的是用例级 time_limit，它必须取"线性耗时"与"暴力耗时"的**几何中点**，
+    而不是贴着暴力解的真实耗时：
+      · 早前方案（12000 + time_limit=2s）：暴力解实测 1.9~2.3s，只剩约 10% 余量，
+        实测判定随机器负载翻转——同一份代码既被判 fail（2.2s）又被判 pass（1.9s），
+        等于筛不掉 O(n^2)；而且"贴着设"意味着要被测代码真跑满 2 秒才给结论。
+      · 现方案（6000 + time_limit=0.05s）：线性解可容忍慢 25 倍、暴力解要机器快约 10 倍
+        才可能漏判，两侧余量都在 10 倍以上。
+
+    规模为什么不取更大（实测，不是估算）：限时是**事后判定**，无法中途打断被测函数，
+    所以暴力解一定跑满自己的真实耗时；规模越大跑得越久、沙箱压力越大。12000 规模时
+    单例约 2s、约 7×10^7 次内层迭代，25 次连跑里有 2 次触发沙箱子进程异常（一次
+    exit=3221225477 访问违例，整轮验证只剩一句"沙箱子进程无有效输出"；一次该用例
+    detail 变成莫名的 TypeError）——同一台机器上光是"大 payload"或"纯长循环"单独
+    各跑 25/15 次都是 0 异常，说明异常来自"大数组 × 双层下标循环"这个组合。
+    降到 6000 后单例约 0.5s、迭代量降 4 倍；同时全局 timeout=15 也留出更宽余量
+    （20000 规模曾实测 >15s 撞全局超时：status=timeout、其余用例信息全丢、
+    error 还误报"疑似死循环"）。
+
     答案被刻意放在数组最后两位：暴力解必须扫完全表才命中。
     """
-    nums = list(range(2, 24002, 2))       # 12000 个偶数
+    nums = list(range(2, 12002, 2))       # 6000 个偶数
     nums += [1_000_003, 1_000_005]        # 两个大奇数在末尾
     return nums, 2_000_008                # 1_000_003 + 1_000_005
 
@@ -192,8 +210,8 @@ TEST_SUITES = {
              "checker": "two_sum_indices"},
             {"name": "边界·负数参与命中", "args": [[-3, 4, 3, 90], 0],
              "checker": "two_sum_indices"},
-            {"name": "性能边界·12000 长数组尾部命中", "args": _long_two_sum_nums(),
-             "checker": "two_sum_indices", "time_limit": 2},
+            {"name": "性能边界·6000 长数组尾部命中", "args": _long_two_sum_nums(),
+             "checker": "two_sum_indices", "time_limit": 0.05},
         ],
     },
 }
@@ -215,24 +233,46 @@ _AUTO_MATCH_HINTS = {
     "two_sum": ("两数之和", "two sum", "two_sum", "twosum", "2sum"),
 }
 
-# 题面"标题区"的判定：先剥掉"题目：/问题：/Task:"这类前缀标签，再截到第一个句读
+# 同题族但"语义不同"的变体：命中排除词时一律不挑该套件（宁可 skipped，也不套错套件造假红）。
+# 典型：LeetCode 167「两数之和 II - 输入有序数组」要求返回 **1-based** 下标，与
+# LeetCode 1 的 0-based 语义相反——实测把 167 的正确解喂给 two_sum 套件会被判 ✗（假红）。
+# 注意别放裸 "2"：hint 里就有 "2sum"，放裸 "2" 会把 "2sum" 这种写法一起排除掉
+# （已有单测 test_bare_2sum_hint_survives_exclusion 钉住这条）。
+_AUTO_MATCH_EXCLUDE = {
+    "two_sum": ("ii", "二", "有序", "sorted"),
+}
+
+# 题面"标题区"的判定：先剥掉"题目：/问题：/Task:"这类前缀标签，再剥掉题号前缀，
+# 最后截到第一个句读符号
 _TITLE_LABEL_RE = re.compile(r"^\s*(?:题目|问题|task|problem)\s*[:：]\s*", re.IGNORECASE)
+# 题号前缀：数字后面必须跟"题"字或一个明确的分隔符（. 、 , ：) 等），
+# 这样 "2sum" 不会被剥成 "sum"（它本身就是 two_sum 的关键词之一）。
+_TITLE_INDEX_RE = re.compile(
+    r"^\s*(?:leetcode\s*)?(?:第\s*)?\d+\s*(?:题\s*[.、,，:：)）\]]?|[.、,，:：)）\]])\s*",
+    re.IGNORECASE,
+)
 _TITLE_CUT_CHARS = "。！？；\n\r"
 
 
 def topic_title(topic):
     """取题面的"标题区"（小写后返回）：第一个非空行 → 剥掉"题目："类前缀 →
-    截到第一个句读符号（。！？；）。
+    剥掉题号前缀 → 截到第一个句读符号（。！？；）。
 
     返回空串表示拿不到标题区（调用方按"拿不准"处理）。只看标题区是为了区分
     "题面就是在讲这道题"（专名出现在标题里）与"正文顺口提一句"（如
     "这题比两数之和难很多"，专名埋在正文里）——后者不该被认成该题。
+
+    题号前缀必须剥掉：从 LeetCode 页面复制的题面常以题号开头（"1. 两数之和"、
+    "1. Two Sum"、"LeetCode 1. Two Sum"、"第 1 题 两数之和"），不剥的话关键词既不
+    在标题区开头、又只有 1 个命中，会被漏判成"拿不准"→ 跳过验证（漏判无害，
+    但等于白挂了一个功能）。
     """
     for raw_line in (topic or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
         line = _TITLE_LABEL_RE.sub("", line)
+        line = _TITLE_INDEX_RE.sub("", line)
         for idx, ch in enumerate(line):
             if ch in _TITLE_CUT_CHARS:
                 line = line[:idx]
@@ -248,8 +288,10 @@ def pick_suite(topic):
       标题区中命中关键词，且满足其一——
         ① 标题区**以关键词打头**（"两数之和（LeetCode 1）"、"Two Sum - LeetCode 1"）；
         ② 标题区同时命中 **≥2 个不同关键词**。
-      因此像 "LeetCode 1: Two Sum" 这种"题号在前"的写法会漏判 —— 宁可漏成
-      skipped，也不猜错成假红/假绿。
+      题号前缀（"1." / "LeetCode 1." / "第 1 题"）在取标题区时已剥掉，故
+      "1. Two Sum" 这类常见粘贴格式仍能命中。
+      同题族的语义变体（如「两数之和 II」返回 1-based 下标）由 _AUTO_MATCH_EXCLUDE
+      排除 → skipped，不套错套件。
     只认高置信专名，不放 target / 数组 这类泛词——避免给不相关题目
     硬套 two_sum 用例，把好代码判成"假红"。
     """
@@ -262,6 +304,8 @@ def pick_suite(topic):
         hits = [h for h in hints if h in title]
         if not hits:
             continue
+        if any(x in title for x in _AUTO_MATCH_EXCLUDE.get(suite_name, ())):
+            continue        # 同题族的变体（如两数之和 II）：语义不同，宁可跳过
         if len(hits) >= 2 or any(title.startswith(h) for h in hits):
             return suite_name
     return None

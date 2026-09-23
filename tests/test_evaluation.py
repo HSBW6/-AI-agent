@@ -550,6 +550,59 @@ class PickSuiteTest(unittest.TestCase):
                  "说明：本题比两数之和简单，two sum 的哈希做法不适用。")
         self.assertIsNone(ev.pick_suite(topic))
 
+    def test_question_number_prefix_still_matches(self):
+        """题号开头的常见粘贴格式必须命中（T5e）。
+
+        从 LeetCode 页面复制的题面基本都以题号打头；不剥题号前缀的话，关键词既不在
+        标题区开头、又只命中 1 个，会被判成"拿不准"→ 跳过验证（漏判无害，但等于
+        白挂了一个功能）。这几种写法都要能认出 two_sum。
+        """
+        for topic in ("1. Two Sum",
+                      "1. 两数之和",
+                      "LeetCode 1. Two Sum",
+                      "第 1 题 两数之和",
+                      "题目：1. 两数之和"):
+            self.assertEqual(ev.pick_suite(topic), "two_sum", msg=topic)
+
+    def test_two_sum_ii_variant_is_excluded(self):
+        """LeetCode 167「两数之和 II」是语义变体（1-based 下标）：必须不挑套件（T5f 前置）"""
+        for topic in ("两数之和 II - 输入有序数组",
+                      "167. 两数之和 II",
+                      "Two Sum II",
+                      "两数之和（有序数组）"):
+            self.assertIsNone(ev.pick_suite(topic), msg=topic)
+
+    def test_two_sum_ii_correct_solution_is_skipped_not_failed(self):
+        """端到端（T5f）：167 的正确解在自动模式下必须 skipped，绝不允许假红。
+
+        167 要求返回 **1-based** 下标，two_sum 套件的 checker 按 0-based 校验，
+        所以一旦误挑 two_sum，这段完全正确的代码会拿到 status=fail
+        （detail：nums[1] + nums[2] = 7 + 11 != target=9）——修好前实测就是这个假红。
+        """
+        topic = "两数之和 II - 输入有序数组"
+        suite_name = ev.pick_suite(topic)          # 自动模式挑到的套件（期望 None）
+        code = wrapped("""
+            def two_sum(nums, target):
+                i, j = 0, len(nums) - 1
+                while i < j:
+                    s = nums[i] + nums[j]
+                    if s == target:
+                        return [i + 1, j + 1]   # 167 的题面要求：1-based 下标
+                    if s < target:
+                        i += 1
+                    else:
+                        j -= 1
+        """)
+        r = ev.run_code_verification(code, suite_name=suite_name)
+        self.assertIsNone(suite_name)
+        self.assertEqual(r.status, "skipped")      # 修好前这里是 "fail"（假红）
+        self.assertFalse(r.passed)
+
+    def test_bare_2sum_hint_survives_exclusion(self):
+        """护栏：排除词里不许出现裸 "2"。"2sum" 本身就是 hint，被排除掉是静默砍功能"""
+        self.assertEqual(ev.pick_suite("2sum"), "two_sum")
+        self.assertEqual(ev.pick_suite("2Sum"), "two_sum")
+
 
 class SkippedRenderingTest(unittest.TestCase):
     """任务 6：自动模式跳过验证时的渲染文案（对应验收脚本 T6a）。
