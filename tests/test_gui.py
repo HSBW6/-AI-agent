@@ -1,6 +1,6 @@
-"""GUI 选择逻辑单测（任务 7）。
+"""GUI 选择逻辑单测。
 
-任务 7 的交互改动没法在无桌面环境下目测，所以把其中"可判定"的部分抽成了
+GUI 交互改动没法在无桌面环境下目测，所以把其中"可判定"的部分抽成了
 gui.py 的模块级纯函数，在这里钉住：
 
   - resolve_verify_choice：下拉选择 → run_discussion 的 (verify_code, verify_suite)

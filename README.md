@@ -3,7 +3,7 @@
 > 让**两个不同厂商的大模型**扮成两个人设角色互相讲题、抬杠、找茬，最后由主持人收尾给出完整可运行代码，
 > 再把这段代码丢进**受限沙箱真跑一遍题目用例**，用 ✓ / ✗ 说话。
 >
-> CLI + 桌面 GUI 双入口 · 纯 Python 标准库 GUI · 88 项离线单测
+> CLI + 桌面 GUI 双入口 · 纯 Python 标准库 GUI · 91 项离线单测
 
 ---
 
@@ -28,7 +28,7 @@
 - **滚动摘要控制上下文成本**：每轮结束把"旧摘要 + 本轮发言"压成一条新摘要（末轮不压），上下文不随轮数线性膨胀；摘要超长时也会给原始发言留足预算。
 - **评测闭环，让代码不再自嗨**：解析总结里的 ` ```python ` 代码块 → 受限命名空间 `exec` → 独立子进程执行 → 逐用例断言。结果分 `pass / fail / no_code / error / timeout / skipped` 六态。
 - **不假红的取舍**：题目→用例套件是**启发式识别**，识别不了就 `skipped`（中性灰），绝不硬套一个套件把好代码判成 ✗；同一题族的语义变体（如「两数之和 II」要求 1-based 下标）也会主动跳过。
-- **88 项离线单测**：用 `FakeAgent` 顶替真模型，**不联网、不读 Key、不花额度**，毫秒级跑完。
+- **91 项离线单测**：用 `FakeAgent` 顶替真模型，**不联网、不读 Key、不花额度**，实测约 3 秒跑完（测试文件里其余用例走真实子进程，唯 taskkill 失败路径用 mock 定向替身——那条路径在普通机器上无法稳定构造）。
 - **一堆踩坑修出来的工程细节**：客户端复用（keep-alive）、可中断退避（点停止立刻响应）、重试分级（4xx 不重试 / 429 读 `Retry-After`）、截断告警、超时**进程树**击杀、沙箱子进程只给最小环境变量。
 
 ---
@@ -89,7 +89,7 @@ personas.py       人设词库（改人设只动这个文件）
 config.py         全局配置与 Key 校验（常量单一来源）
 evaluation.py     评测引擎：代码块提取 → 受限沙箱 → 用例断言 → 结果渲染
 gui.py            Tkinter GUI（后台线程 + queue + hooks，界面不阻塞）
-tests/            88 项离线单测（test_chat / test_evaluation / test_agent / test_gui）
+tests/            91 项离线单测（test_chat / test_evaluation / test_agent / test_gui）
 ```
 
 ---
@@ -115,7 +115,7 @@ tests/            88 项离线单测（test_chat / test_evaluation / test_agent 
 ## 测试
 
 ```bash
-python -m unittest discover -s tests      # 88 项，离线，约 3 秒
+python -m unittest discover -s tests      # 91 项，离线，约 3 秒
 ```
 
 ---
