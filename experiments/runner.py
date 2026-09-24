@@ -387,6 +387,21 @@ def main(argv=None):
 
     kwargs = dict(rounds=args.rounds, max_retries=args.max_retries,
                   provider=args.provider)
+
+    # 增量落盘：每题跑完立刻追加一行。原先"整批跑完再统一写"的写法有真风险——
+    # 免费档限流中断时，整批已完成的结果都会丢在内存里。增量写 + report.py
+    # 的去重，让实验可以随时中断、随时重跑。
+    out_path = None
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _persist(r):
+        if out_path is None:
+            return
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
+
     results = []
     for i, p in enumerate(problems, 1):
         print("\n[%d/%d] %s (%s)" % (i, len(problems), p["suite_key"], p["difficulty"]))
@@ -400,6 +415,7 @@ def main(argv=None):
                           attempts=1, elapsed_sec=0.0,
                           detail="%s: %s" % (type(exc).__name__, exc))
         results.append(r)
+        _persist(r)
         mark = "PASS" if r.passed else "FAIL"
         print("  %s | status=%s | err=%s | attempts=%d | %.1fs"
               % (mark, r.status, r.error_class, r.attempts, r.elapsed_sec))
@@ -411,13 +427,8 @@ def main(argv=None):
     for cls, n in Counter(r.error_class for r in results).most_common():
         print("  %-28s %d" % (cls, n))
 
-    if args.out:
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "a", encoding="utf-8") as f:
-            for r in results:
-                f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
-        print("\n已追加写入：%s" % out)
+    if out_path is not None:
+        print("\n结果已逐题追加写入：%s" % out_path)
     return 0
 
 
