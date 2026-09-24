@@ -31,9 +31,18 @@ DATASET_PATH = (
     if len(sys.argv) > 1
     else ROOT / "experiments" / "dataset_raw.json"
 )
+# 期望规模可用命令行覆盖（多批数据集难度分布不同）：
+#   validate_dataset.py <path> [题目总数] [easy] [medium] [hard]
+TOTAL_EXPECTED = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+if len(sys.argv) >= 6:
+    EXPECTED_DIFF = {
+        "easy": int(sys.argv[3]),
+        "medium": int(sys.argv[4]),
+        "hard": int(sys.argv[5]),
+    }
+else:
+    EXPECTED_DIFF = {"easy": 3, "medium": 4, "hard": 3}
 
-TOTAL_EXPECTED = 10
-EXPECTED_DIFF = {"easy": 3, "medium": 4, "hard": 3}
 REQUIRED_FIELDS = [
     "suite_key", "label", "difficulty", "function_name",
     "signature", "prompt", "reference", "cases",
@@ -78,7 +87,11 @@ SANDBOX = load_sandbox_builtins()
 
 
 def build_env():
-    return {"__builtins__": dict(SANDBOX)}
+    # __name__ 必须提供：被测代码若在函数内部定义 class，class 体的执行需要
+    # __name__ 来设置 __module__，缺失会抛 NameError（Marvis 首轮验证实测到）。
+    # 项目真实沙箱 runner 里同样提供它，这里必须对齐——否则数据集会出现
+    # "验证器能过、真实评测报错"或反过来的环境不一致。
+    return {"__builtins__": dict(SANDBOX), "__name__": "__sandbox__"}
 
 
 class ItemResult:
