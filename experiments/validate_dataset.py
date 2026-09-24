@@ -261,8 +261,9 @@ def main():
 
     print("\n" + "=" * 66)
     passed = sum(1 for r in results if r.ok)
-    print("难度分布：easy=%d medium=%d hard=%d（要求 3/4/3）"
-          % (diff_count.get("easy", 0), diff_count.get("medium", 0), diff_count.get("hard", 0)))
+    print("难度分布：easy=%d medium=%d hard=%d（要求 %d/%d/%d）"
+          % (diff_count.get("easy", 0), diff_count.get("medium", 0), diff_count.get("hard", 0),
+             EXPECTED_DIFF["easy"], EXPECTED_DIFF["medium"], EXPECTED_DIFF["hard"]))
     for d, want in EXPECTED_DIFF.items():
         if diff_count.get(d, 0) != want:
             global_errors.append("难度 %s 应为 %d 题，实际 %d" % (d, want, diff_count.get(d, 0)))
