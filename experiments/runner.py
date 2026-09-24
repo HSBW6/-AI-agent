@@ -193,9 +193,27 @@ class RunResult:
 
 # ---------------------------------------------------------------- 四种配置
 
+# Agent 实例缓存：Agent 内部持有 OpenAI client（走 TCP keep-alive）。
+# 每题都新建 Agent 会导致每个请求都是一次"新连接"的首次请求——而 agent.py
+# 里明确记着"智谱免费档对新连接的首次请求尤其慢，实测达 20s+"。
+# single 模式每题只有 1 次调用，等于 100% 冷启动，实测正是这个原因让单题
+# 从 ~4s 涨到 13.3s。Agent 本身无对话状态（每次 say 都传完整 messages），
+# 所以跨题复用是安全的。
+_AGENT_CACHE = {}
+
+
+def _get_agent(role, provider, temperature=None):
+    key = (role, provider, temperature)
+    agent = _AGENT_CACHE.get(key)
+    if agent is None:
+        agent = Agent(role, provider=provider, temperature=temperature)
+        _AGENT_CACHE[key] = agent
+    return agent
+
+
 def run_single(problem, provider="deepseek", temperature=None, max_tokens=None):
     """单模型直答：总结者一次性输出代码。返回 (reply, VerificationResult)。"""
-    agent = Agent(SOLVER_ROLE, provider=provider, temperature=temperature)
+    agent = _get_agent(SOLVER_ROLE, provider, temperature)
     reply = agent.say(
         build_solver_prompt(problem),
         extra_instruction="这是一道独立的算法题（没有讨论记录），请直接给出最终实现。",
@@ -207,7 +225,7 @@ def run_single(problem, provider="deepseek", temperature=None, max_tokens=None):
 def run_single_self_correct(problem, provider="deepseek", temperature=None,
                             max_retries=2, max_tokens=None):
     """单模型自纠：答 → 验证 → 把错误回喂 → 重答。返回 (最后一次reply, 最后验证, 次数)。"""
-    agent = Agent(SOLVER_ROLE, provider=provider, temperature=temperature)
+    agent = _get_agent(SOLVER_ROLE, provider, temperature)
     base = build_solver_prompt(problem)
     text = base
     reply, result, attempts = "", None, 0
@@ -370,6 +388,9 @@ def main(argv=None):
     ap.add_argument("--max-retries", type=int, default=2, help="自纠重试上限")
     ap.add_argument("--provider", default="deepseek", help="single/自纠与总结者用的厂商")
     ap.add_argument("--out", default=None, help="结果落盘路径（JSONL）")
+    ap.add_argument("--delay", type=float, default=0.0,
+                    help="每题之间的等待秒数：用于规避免费档的账号级速率限制"
+                         "（智谱免费档会回 429/1302，建议 15~20）")
     ap.add_argument("--dry-run", action="store_true", help="只打印题面与配置，不调 API")
     args = ap.parse_args(argv)
 
@@ -404,6 +425,9 @@ def main(argv=None):
 
     results = []
     for i, p in enumerate(problems, 1):
+        if i > 1 and args.delay > 0:
+            print("  [限速] 等待 %.0f 秒后继续…" % args.delay)
+            time.sleep(args.delay)
         print("\n[%d/%d] %s (%s)" % (i, len(problems), p["suite_key"], p["difficulty"]))
         try:
             r = run_one(args.mode, p, **kwargs)
