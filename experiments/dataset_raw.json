@@ -1,0 +1,649 @@
+[
+  {
+    "suite_key": "valid_parentheses",
+    "label": "有效的括号（LeetCode 20）",
+    "difficulty": "easy",
+    "function_name": "valid_parentheses",
+    "signature": "def valid_parentheses(s: str) -> bool",
+    "prompt": "给定一个只包含 '('、')'、'['、']'、'{'、'}' 的字符串 s，判断括号是否有效匹配。有效需满足：左括号必须用相同类型的右括号闭合，左括号必须以正确的顺序闭合。\n\n输入：一个字符串 s，长度 0 <= len(s) <= 100000。\n输出：布尔值 true 或 false。\n\n示例 1：输入 s = \"()[]{}\"，输出 true。\n示例 2：输入 s = \"([)]\"，输出 false（交叉闭合不合法）。\n示例 3：输入 s = \"(\"，输出 false。\n示例 4：输入 s = \"\"，输出 true（空串视为有效）。",
+    "reference": "def valid_parentheses(s):\n    stack = []\n    pairs = {')': '(', ']': '[', '}': '{'}\n    for ch in s:\n        if ch == '(' or ch == '[' or ch == '{':\n            stack.append(ch)\n        else:\n            if not stack or stack[-1] != pairs[ch]:\n                return False\n            stack.pop()\n    return not stack",
+    "cases": [
+      {
+        "name": "基本·多对括号",
+        "args": [
+          "()[]{}"
+        ],
+        "expect": true
+      },
+      {
+        "name": "基本·嵌套括号",
+        "args": [
+          "{[]}"
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·空字符串",
+        "args": [
+          ""
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·单个左括号",
+        "args": [
+          "("
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·错误交叉",
+        "args": [
+          "([)]"
+        ],
+        "expect": false
+      }
+    ]
+  },
+  {
+    "suite_key": "single_number",
+    "label": "只出现一次的数字（LeetCode 136）",
+    "difficulty": "easy",
+    "function_name": "single_number",
+    "signature": "def single_number(nums: list) -> int",
+    "prompt": "给定一个非空整数数组 nums，其中恰好有一个元素只出现一次，其余每个元素均出现两次。请找出那个只出现一次的元素。\n\n输入：一个非空整数数组 nums，长度 1 <= len(nums) <= 100000，元素范围 -2^31 <= nums[i] <= 2^31-1。\n输出：一个整数，表示只出现一次的元素。\n\n示例 1：输入 nums = [2,2,1]，输出 1。\n示例 2：输入 nums = [4,1,2,1,2]，输出 4。\n示例 3：输入 nums = [1]，输出 1。",
+    "reference": "def single_number(nums):\n    res = 0\n    for x in nums:\n        res = res ^ x\n    return res",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            2,
+            2,
+            1
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            4,
+            1,
+            2,
+            1,
+            2
+          ]
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·含零",
+        "args": [
+          [
+            0,
+            0,
+            7
+          ]
+        ],
+        "expect": 7
+      },
+      {
+        "name": "边界·乱序成对",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            2,
+            1
+          ]
+        ],
+        "expect": 3
+      }
+    ]
+  },
+  {
+    "suite_key": "has_cycle",
+    "label": "环形链表（LeetCode 141）",
+    "difficulty": "easy",
+    "function_name": "has_cycle",
+    "signature": "def has_cycle(nums: list, pos: int) -> bool",
+    "prompt": "给定一个链表的头节点，判断链表中是否有环。为便于输入，链表用两个参数表示：nums 是按链表顺序排列的节点值数组，pos 是尾节点 next 指针指向的节点在数组中的下标（即环入口）；pos = -1 表示无环。空数组表示空链表，无环。\n\n输入：整数数组 nums 与整数 pos，长度 0 <= len(nums) <= 100000，-1 <= pos < len(nums)。\n输出：布尔值 true（有环）或 false（无环）。\n\n示例 1：输入 nums = [3,2,0,-4], pos = 1，输出 true（尾节点指向下标 1 的节点，构成环）。\n示例 2：输入 nums = [1,2], pos = 0，输出 true。\n示例 3：输入 nums = [1], pos = -1，输出 false。",
+    "reference": "def has_cycle(nums, pos):\n    if not nums:\n        return False\n    n = len(nums)\n    def nxt(i):\n        if i == n - 1:\n            return pos if pos >= 0 else -1\n        return i + 1\n    slow = 0\n    fast = 0\n    while fast != -1 and nxt(fast) != -1:\n        slow = nxt(slow)\n        fast = nxt(nxt(fast))\n        if slow == fast:\n            return True\n    return False",
+    "cases": [
+      {
+        "name": "基本·尾部成环",
+        "args": [
+          [
+            3,
+            2,
+            0,
+            -4
+          ],
+          1
+        ],
+        "expect": true
+      },
+      {
+        "name": "基本·头尾成环",
+        "args": [
+          [
+            1,
+            2
+          ],
+          0
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·自环",
+        "args": [
+          [
+            1
+          ],
+          0
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·无环单节点",
+        "args": [
+          [
+            1
+          ],
+          -1
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·空链表",
+        "args": [
+          [],
+          -1
+        ],
+        "expect": false
+      }
+    ]
+  },
+  {
+    "suite_key": "length_of_longest_substring",
+    "label": "无重复字符的最长子串（LeetCode 3）",
+    "difficulty": "medium",
+    "function_name": "length_of_longest_substring",
+    "signature": "def length_of_longest_substring(s: str) -> int",
+    "prompt": "给定一个字符串 s，请你找出其中不含有重复字符的最长子串的长度。\n\n输入：一个字符串 s，仅由可打印 ASCII 字符组成，长度 0 <= len(s) <= 100000。\n输出：一个整数，表示无重复字符的最长子串的长度。\n\n示例 1：输入 s = \"abcabcbb\"，输出 3（最长无重复子串为 \"abc\"）。\n示例 2：输入 s = \"bbbbb\"，输出 1。\n示例 3：输入 s = \"pwwkew\"，输出 3（最长无重复子串为 \"wke\"；\"pwke\" 含重复字符，不合法）。\n示例 4：输入 s = \"\"，输出 0。",
+    "reference": "def length_of_longest_substring(s):\n    seen = {}\n    left = 0\n    best = 0\n    for right in range(len(s)):\n        ch = s[right]\n        if ch in seen and seen[ch] >= left:\n            left = seen[ch] + 1\n        seen[ch] = right\n        cur = right - left + 1\n        if cur > best:\n            best = cur\n    return best",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "abcabcbb"
+        ],
+        "expect": 3
+      },
+      {
+        "name": "基本·官方示例3",
+        "args": [
+          "pwwkew"
+        ],
+        "expect": 3
+      },
+      {
+        "name": "边界·空字符串",
+        "args": [
+          ""
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·全部相同字符",
+        "args": [
+          "bbbbb"
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·单字符",
+        "args": [
+          "a"
+        ],
+        "expect": 1
+      }
+    ]
+  },
+  {
+    "suite_key": "search_in_rotated_sorted_array",
+    "label": "搜索旋转排序数组（LeetCode 33）",
+    "difficulty": "medium",
+    "function_name": "search_in_rotated_sorted_array",
+    "signature": "def search_in_rotated_sorted_array(nums: list, target: int) -> int",
+    "prompt": "整数数组 nums 原本按升序排列，且在未知的某个下标处进行了旋转（例如 [0,1,2,4,5,6,7] 在下标 3 处旋转后变为 [4,5,6,7,0,1,2]）。数组中元素互不相同。给定该数组和目标值 target，请返回 target 在数组中的下标；若不存在，返回 -1。\n\n输入：整数数组 nums 与整数 target，长度 1 <= len(nums) <= 100000，元素互不相同，元素范围 -10000 <= nums[i] <= 10000。\n输出：一个整数，为 target 的下标，或 -1。\n\n示例 1：输入 nums = [4,5,6,7,0,1,2], target = 0，输出 4。\n示例 2：输入 nums = [4,5,6,7,0,1,2], target = 3，输出 -1。\n示例 3：输入 nums = [1], target = 0，输出 -1。",
+    "reference": "def search_in_rotated_sorted_array(nums, target):\n    lo = 0\n    hi = len(nums) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if nums[mid] == target:\n            return mid\n        if nums[lo] <= nums[mid]:\n            if nums[lo] <= target < nums[mid]:\n                hi = mid - 1\n            else:\n                lo = mid + 1\n        else:\n            if nums[mid] < target <= nums[hi]:\n                lo = mid + 1\n            else:\n                hi = mid - 1\n    return -1",
+    "cases": [
+      {
+        "name": "基本·旋转后命中",
+        "args": [
+          [
+            4,
+            5,
+            6,
+            7,
+            0,
+            1,
+            2
+          ],
+          0
+        ],
+        "expect": 4
+      },
+      {
+        "name": "基本·未旋转命中",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          3
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·单元素命中",
+        "args": [
+          [
+            1
+          ],
+          1
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·单元素未命中",
+        "args": [
+          [
+            1
+          ],
+          0
+        ],
+        "expect": -1
+      },
+      {
+        "name": "边界·旋转后首元素命中",
+        "args": [
+          [
+            5,
+            1,
+            3
+          ],
+          5
+        ],
+        "expect": 0
+      }
+    ]
+  },
+  {
+    "suite_key": "coin_change",
+    "label": "零钱兑换（LeetCode 322）",
+    "difficulty": "medium",
+    "function_name": "coin_change",
+    "signature": "def coin_change(coins: list, amount: int) -> int",
+    "prompt": "给你一个整数数组 coins 表示不同面额的硬币，以及一个整数 amount 表示总金额。计算并返回可以凑成总金额所需的最少的硬币个数；如果没有任何一种硬币组合能组成总金额，返回 -1。每种硬币的数量无限。\n\n输入：整数数组 coins 与整数 amount，1 <= len(coins) <= 100，1 <= coins[i] <= 2^31-1，0 <= amount <= 10000。\n输出：一个整数，表示最少硬币数；无法凑出时返回 -1。\n\n示例 1：输入 coins = [1,2,5], amount = 11，输出 3（11 = 5 + 5 + 1）。\n示例 2：输入 coins = [2], amount = 3，输出 -1。\n示例 3：输入 coins = [1], amount = 0，输出 0。",
+    "reference": "def coin_change(coins, amount):\n    INF = amount + 1\n    dp = [INF] * (amount + 1)\n    dp[0] = 0\n    for i in range(1, amount + 1):\n        for c in coins:\n            if c <= i and dp[i - c] + 1 < dp[i]:\n                dp[i] = dp[i - c] + 1\n    if dp[amount] == INF:\n        return -1\n    return dp[amount]",
+    "cases": [
+      {
+        "name": "基本·官方示例",
+        "args": [
+          [
+            1,
+            2,
+            5
+          ],
+          11
+        ],
+        "expect": 3
+      },
+      {
+        "name": "基本·多种组合取最少",
+        "args": [
+          [
+            1,
+            5,
+            10,
+            25
+          ],
+          30
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·金额为零",
+        "args": [
+          [
+            1
+          ],
+          0
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·无法凑出",
+        "args": [
+          [
+            2
+          ],
+          3
+        ],
+        "expect": -1
+      },
+      {
+        "name": "边界·单枚硬币恰好",
+        "args": [
+          [
+            2,
+            4
+          ],
+          4
+        ],
+        "expect": 1
+      }
+    ]
+  },
+  {
+    "suite_key": "jump_game",
+    "label": "跳跃游戏（LeetCode 55）",
+    "difficulty": "medium",
+    "function_name": "jump_game",
+    "signature": "def jump_game(nums: list) -> bool",
+    "prompt": "给定一个非负整数数组 nums，你最初位于数组的第一个下标。数组中的每个元素代表你在该位置可以跳跃的最大长度。判断你是否能够到达最后一个下标。\n\n输入：一个非负整数数组 nums，长度 1 <= len(nums) <= 100000，元素范围 0 <= nums[i] <= 100000。\n输出：布尔值 true（能到达）或 false（不能到达）。\n\n示例 1：输入 nums = [2,3,1,1,4]，输出 true（先跳 1 步到下标 1，再跳 3 步到达末尾）。\n示例 2：输入 nums = [3,2,1,0,4]，输出 false（下标 3 处无法越过）。\n示例 3：输入 nums = [0]，输出 true。",
+    "reference": "def jump_game(nums):\n    reach = 0\n    for i in range(len(nums)):\n        if i > reach:\n            return False\n        if i + nums[i] > reach:\n            reach = i + nums[i]\n    return True",
+    "cases": [
+      {
+        "name": "基本·可到达",
+        "args": [
+          [
+            2,
+            3,
+            1,
+            1,
+            4
+          ]
+        ],
+        "expect": true
+      },
+      {
+        "name": "基本·不可到达",
+        "args": [
+          [
+            3,
+            2,
+            1,
+            0,
+            4
+          ]
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            0
+          ]
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·终点前卡死",
+        "args": [
+          [
+            1,
+            0,
+            1
+          ]
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·起点可直接跳到末尾",
+        "args": [
+          [
+            2,
+            0,
+            0
+          ]
+        ],
+        "expect": true
+      }
+    ]
+  },
+  {
+    "suite_key": "binary_tree_max_path_sum",
+    "label": "二叉树中的最大路径和（LeetCode 124）",
+    "difficulty": "hard",
+    "function_name": "binary_tree_max_path_sum",
+    "signature": "def binary_tree_max_path_sum(root: list) -> int",
+    "prompt": "二叉树中的路径被定义为一条从树中任意节点出发、沿父子连接向下走到任意节点的节点序列，路径至少包含一个节点。请计算并返回该树中最大路径和（路径上各节点值之和，路径可以经过根节点也可以不经过）。\n\n输入：二叉树的层序遍历数组 root（元素为整数或 null，null 表示空节点，按层从左到右排列），长度 1 <= len(root) <= 20000，节点值范围 -1000 <= root[i] <= 1000。\n输出：一个整数，表示最大路径和。\n\n示例 1：输入 root = [1,2,3]，输出 6（路径 2 -> 1 -> 3）。\n示例 2：输入 root = [-10,9,20,null,null,15,7]，输出 42（路径 15 -> 20 -> 7）。\n示例 3：输入 root = [-3]，输出 -3（只能取单个节点）。",
+    "reference": "def binary_tree_max_path_sum(root):\n    if not root:\n        return 0\n    vals = [root[0]]\n    lefts = [-1]\n    rights = [-1]\n    queue = [0]\n    qi = 0\n    i = 1\n    while qi < len(queue) and i < len(root):\n        cur = queue[qi]\n        qi += 1\n        if i < len(root):\n            v = root[i]\n            i += 1\n            if v is not None:\n                lefts[cur] = len(vals)\n                vals.append(v)\n                lefts.append(-1)\n                rights.append(-1)\n                queue.append(lefts[cur])\n        if i < len(root):\n            v = root[i]\n            i += 1\n            if v is not None:\n                rights[cur] = len(vals)\n                vals.append(v)\n                lefts.append(-1)\n                rights.append(-1)\n                queue.append(rights[cur])\n    ans = [-10 ** 18]\n    def dfs(node):\n        if node == -1:\n            return 0\n        left = max(dfs(lefts[node]), 0)\n        right = max(dfs(rights[node]), 0)\n        cur = vals[node] + left + right\n        if cur > ans[0]:\n            ans[0] = cur\n        return vals[node] + max(left, right)\n    dfs(0)\n    return ans[0]",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        "expect": 6
+      },
+      {
+        "name": "基本·官方示例3",
+        "args": [
+          [
+            5,
+            4,
+            8,
+            11,
+            null,
+            13,
+            4,
+            7,
+            2,
+            null,
+            null,
+            null,
+            1
+          ]
+        ],
+        "expect": 48
+      },
+      {
+        "name": "边界·单节点负值",
+        "args": [
+          [
+            -3
+          ]
+        ],
+        "expect": -3
+      },
+      {
+        "name": "边界·根大于子树和",
+        "args": [
+          [
+            2,
+            -1,
+            -2
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·全正链",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ]
+        ],
+        "expect": 10
+      }
+    ]
+  },
+  {
+    "suite_key": "longest_valid_parentheses",
+    "label": "最长有效括号（LeetCode 32）",
+    "difficulty": "hard",
+    "function_name": "longest_valid_parentheses",
+    "signature": "def longest_valid_parentheses(s: str) -> int",
+    "prompt": "给定一个只包含 '(' 和 ')' 的字符串 s，找出最长有效（格式正确且连续）括号子串的长度。\n\n输入：一个字符串 s，仅包含字符 '(' 和 ')'，长度 0 <= len(s) <= 100000。\n输出：一个整数，表示最长有效括号子串的长度。\n\n示例 1：输入 s = \"(()\"，输出 2（最长有效子串为 \"()\"）。\n示例 2：输入 s = \")()())\"，输出 4（最长有效子串为 \"()()\"）。\n示例 3：输入 s = \"((()))\"，输出 6。\n示例 4：输入 s = \"\"，输出 0。",
+    "reference": "def longest_valid_parentheses(s):\n    stack = [-1]\n    best = 0\n    for i in range(len(s)):\n        ch = s[i]\n        if ch == '(':\n            stack.append(i)\n        else:\n            stack.pop()\n            if stack:\n                cur = i - stack[-1]\n                if cur > best:\n                    best = cur\n            else:\n                stack.append(i)\n    return best",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "(()"
+        ],
+        "expect": 2
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          ")()())"
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·空字符串",
+        "args": [
+          ""
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·完全匹配",
+        "args": [
+          "((()))"
+        ],
+        "expect": 6
+      },
+      {
+        "name": "边界·无效序列",
+        "args": [
+          ")("
+        ],
+        "expect": 0
+      }
+    ]
+  },
+  {
+    "suite_key": "sliding_window_maximum",
+    "label": "滑动窗口最大值（LeetCode 239）",
+    "difficulty": "hard",
+    "function_name": "sliding_window_maximum",
+    "signature": "def sliding_window_maximum(nums: list, k: int) -> list",
+    "prompt": "给你一个整数数组 nums，有一个大小为 k 的滑动窗口从数组的最左侧移动到最右侧。你只可以看到在滑动窗口内的 k 个数字。滑动窗口每次只向右移动一位。请返回滑动窗口中的最大值组成的数组。\n\n输入：整数数组 nums 与整数 k，长度 1 <= len(nums) <= 100000，1 <= k <= len(nums)，元素范围 -10000 <= nums[i] <= 10000。\n输出：一个整数数组，长度等于 len(nums) - k + 1，第 i 个元素是窗口 [i, i+k-1] 内的最大值。\n\n示例 1：输入 nums = [1,3,-1,-3,5,3,6,7], k = 3，输出 [3,3,5,5,6,7]。\n示例 2：输入 nums = [1], k = 1，输出 [1]。",
+    "reference": "def sliding_window_maximum(nums, k):\n    if not nums or k <= 0:\n        return []\n    dq = []\n    res = []\n    for i in range(len(nums)):\n        x = nums[i]\n        while dq and nums[dq[-1]] <= x:\n            dq.pop()\n        dq.append(i)\n        if dq[0] <= i - k:\n            dq.pop(0)\n        if i >= k - 1:\n            res.append(nums[dq[0]])\n    return res",
+    "cases": [
+      {
+        "name": "基本·官方示例",
+        "args": [
+          [
+            1,
+            3,
+            -1,
+            -3,
+            5,
+            3,
+            6,
+            7
+          ],
+          3
+        ],
+        "expect": [
+          3,
+          3,
+          5,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "name": "基本·窗口为2",
+        "args": [
+          [
+            9,
+            8,
+            7,
+            6
+          ],
+          2
+        ],
+        "expect": [
+          9,
+          8,
+          7
+        ]
+      },
+      {
+        "name": "边界·窗口为1",
+        "args": [
+          [
+            1,
+            -1
+          ],
+          1
+        ],
+        "expect": [
+          1,
+          -1
+        ]
+      },
+      {
+        "name": "边界·窗口等于全长",
+        "args": [
+          [
+            5,
+            5,
+            5
+          ],
+          3
+        ],
+        "expect": [
+          5
+        ]
+      },
+      {
+        "name": "边界·全部相同元素",
+        "args": [
+          [
+            5,
+            5,
+            5
+          ],
+          2
+        ],
+        "expect": [
+          5,
+          5
+        ]
+      }
+    ]
+  }
+]
