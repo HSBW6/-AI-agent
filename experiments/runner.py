@@ -322,10 +322,13 @@ def run_one(mode, problem, **kwargs):
             max_tokens=kwargs.get("max_tokens"),
         )
     elif mode == "homogeneous":
+        # 两个参与者都用 --provider 指定的同一厂商（默认 deepseek）。
+        # 传 --provider zhipu 即「智谱 × 2」，可用免费档跑零成本主实验。
+        same = kwargs.get("provider", "deepseek")
         reply, verification = run_debate(
-            problem, providers=("deepseek", "deepseek"),
+            problem, providers=(same, same),
             rounds=kwargs.get("rounds", 3),
-            summarizer_provider=kwargs.get("provider", "deepseek"),
+            summarizer_provider=same,
             temperature=kwargs.get("temperature"),
         )
     elif mode == "heterogeneous":
