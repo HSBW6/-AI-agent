@@ -8,12 +8,12 @@
   - run_code_verification：正确解（函数 / 驼峰 / class Solution）通过；
     错误逻辑失败且可追溯；未找到函数 / 无代码 / 语法错误 / 危险内建拦截 /
     死循环超时；多代码块回退语义（都没命中解题函数时才取最后一块）
-  - pick_verification_block（批次 1.3）：多代码块优先选定义了 function_names /
+  - pick_verification_block：多代码块优先选定义了 function_names /
     class_names 的块；命中多块取最后一块；都不命中才回退 use_last_block
   - TEST_SUITES 默认两数之和套件结构与可扩展性（新增题目在 TEST_SUITES 加 key）
-  - validate_suite 父进程预校验（批次 1.2）：空套件 / args 非 list / checker
+  - validate_suite 父进程预校验：空套件 / args 非 list / checker
     缺失都必须被拦成 status="error"，绝不放行出"假 pass"
-  - 用例级 time_limit（任务 2）：结果正确但超限判该用例 fail 并报出实际耗时；
+  - 用例级 time_limit：结果正确但超限判该用例 fail 并报出实际耗时；
     限时内完成仍 pass（延时用纯计算循环制造，沙箱禁 __import__）
 
 注意：run_code_verification 每次真实启动一个受限子进程（毫秒级），
@@ -26,6 +26,7 @@ import sys
 import textwrap
 import time
 import unittest
+from unittest import mock
 
 import evaluation as ev
 
@@ -33,7 +34,7 @@ import evaluation as ev
 
 
 
-# --- 进程存活探测（批次 5.1②）---------------------------------------------
+# --- 进程存活探测 ---------------------------------------------
 def _is_pid_alive(pid):
     """跨平台判断某个 pid 是否还活着。
 
@@ -241,7 +242,7 @@ class RunVerificationTest(unittest.TestCase):
 
 
 class PickVerificationBlockTest(unittest.TestCase):
-    """批次 1.3 收尾：多代码块拣块策略（pick_verification_block / _block_defines）
+    """多代码块拣块策略（pick_verification_block / _block_defines）
 
     旧语义：机械取最后一块。新语义：优先选"定义了套件 function_names /
     class_names 的块"；一块都没命中才回退 use_last_block（True=最后一块）。
@@ -308,7 +309,7 @@ class PickVerificationBlockTest(unittest.TestCase):
 
 
 class ValidateSuiteTest(unittest.TestCase):
-    """批次 1.2：validate_suite 父进程预校验
+    """validate_suite 父进程预校验
 
     核心回归点：cases 为空时，runner 的 for 循环空转、all_ok 保持 True，
     旧实现会渲染成 [代码验证 ✓]（假 pass）。预校验必须把它拦成 error。
@@ -432,7 +433,7 @@ class ProcessTreeKillTest(unittest.TestCase):
             "    time.sleep(1)\n"
         )
         # 用 with 托管 Popen：退出时自动 close 掉 stdout/stderr 管道并 wait，
-        # 消掉原来那几条 ResourceWarning: unclosed file（批次 5.1②）
+        # 消掉原来那几条 ResourceWarning: unclosed file
         with subprocess.Popen(
             [sys.executable, "-c", child_code],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -454,8 +455,78 @@ class ProcessTreeKillTest(unittest.TestCase):
                 _force_kill_pid(grandchild_pid)        # 兜底，绝不污染本机
 
 
+class TerminateProcessTreeFallbackTest(unittest.TestCase):
+
+    """taskkill 返回非零退出码时必须回退到 proc.kill()（仅 Windows 分支）。
+
+    实测复现的真 bug：taskkill 因权限不足会失败并返回退出码 1，但
+    subprocess.run 对非零退出码**不抛异常**，所以只写 try/except 时
+    proc.kill() 兜底永远执行不到——被评测的死循环代码会残留成孤儿进程。
+
+    该失败路径在普通机器上无法稳定构造（需要权限被拒），故本类用
+    unittest.mock 做定向替身；本文件其余用例仍坚持真实子进程、不 mock。
+    """
+
+    @unittest.skipUnless(os.name == "nt", "该分支仅 Windows 生效")
+    def test_nonzero_returncode_falls_back_to_kill(self):
+        class _FakeCompleted:
+            returncode = 1
+            stdout = ""
+            stderr = "ERROR: Access denied."
+
+        class _FakeProc:
+            pid = 999999
+
+            def __init__(self):
+                self.killed = False
+
+            def kill(self):
+                self.killed = True
+
+        fake = _FakeProc()
+        with mock.patch.object(ev.subprocess, "run", return_value=_FakeCompleted()):
+            ev._terminate_process_tree(fake)
+        self.assertTrue(fake.killed, "taskkill 返回非 0 时未回退到 proc.kill()")
+
+    @unittest.skipUnless(os.name == "nt", "该分支仅 Windows 生效")
+    def test_success_returncode_skips_fallback(self):
+        class _FakeCompleted:
+            returncode = 0
+
+        class _FakeProc:
+            pid = 999998
+
+            def __init__(self):
+                self.killed = False
+
+            def kill(self):
+                self.killed = True
+
+        fake = _FakeProc()
+        with mock.patch.object(ev.subprocess, "run", return_value=_FakeCompleted()):
+            ev._terminate_process_tree(fake)
+        self.assertFalse(fake.killed, "taskkill 成功时不该再补一刀 proc.kill()")
+
+    @unittest.skipUnless(os.name == "nt", "该分支仅 Windows 生效")
+    def test_taskkill_raising_still_falls_back(self):
+        class _FakeProc:
+            pid = 999997
+
+            def __init__(self):
+                self.killed = False
+
+            def kill(self):
+                self.killed = True
+
+        fake = _FakeProc()
+        with mock.patch.object(ev.subprocess, "run",
+                               side_effect=OSError("taskkill missing")):
+            ev._terminate_process_tree(fake)
+        self.assertTrue(fake.killed, "taskkill 抛异常时未回退到 proc.kill()")
+
+
 class CaseTimeLimitTest(unittest.TestCase):
-    """任务 2（批次 5.3 配套）：用例级 time_limit 机制的单测。
+    """用例级 time_limit 机制的单测。
 
     背景：time_limit 是性能用例（two_sum 的 12000 长数组）唯一的筛子，此前零覆盖
     ——正因为没测，才让"性能用例撞 15s 全局超时、time_limit 从不生效"溜到验收阶段。
@@ -520,27 +591,27 @@ class CaseTimeLimitTest(unittest.TestCase):
 
 
 class PickSuiteTest(unittest.TestCase):
-    """任务 5：pick_suite 只看标题区，正文"提及式"题面不许命中。
+    """pick_suite 只看标题区，正文"提及式"题面不许命中。
 
-    5 条用例对应验收脚本 T5a~T5d：1 条钉住误命中修复，3 条护栏防"修一个坏一个"，
+    5 条用例：1 条钉住误命中修复，3 条护栏防"修一个坏一个"，
     另加 1 条钉住"标题是别的题、正文提及两数之和"的边界。
     """
 
     def test_mention_only_does_not_match(self):
-        """正文顺口提一句 ≠ 题面（T5a）"""
+        """正文顺口提一句 ≠ 题面"""
         self.assertIsNone(ev.pick_suite("这题比两数之和难很多"))
 
     def test_default_chinese_topic_matches(self):
-        """正常中文题面仍命中（T5b 护栏）；用 chat 的真实默认题面，防两份文案漂移"""
+        """正常中文题面仍命中（护栏）；用 chat 的真实默认题面，防两份文案漂移"""
         import chat    # 局部导入：本文件其余用例不依赖 chat，避免连带拉入 agent/openai
         self.assertEqual(ev.pick_suite(chat.DEFAULT_TOPIC), "two_sum")
 
     def test_english_topic_matches(self):
-        """英文题面仍命中（T5c 护栏）"""
+        """英文题面仍命中（护栏）"""
         self.assertEqual(ev.pick_suite("Two Sum - LeetCode 1"), "two_sum")
 
     def test_other_topics_do_not_match(self):
-        """其它题目不误伤（T5d 护栏）；"三数之和"是近名题，不能靠子串蒙中"""
+        """其它题目不误伤（护栏）；"三数之和"是近名题，不能靠子串蒙中"""
         self.assertIsNone(ev.pick_suite("反转字符串（LeetCode 344）"))
         self.assertIsNone(ev.pick_suite("三数之和（LeetCode 15）"))
 
@@ -551,7 +622,7 @@ class PickSuiteTest(unittest.TestCase):
         self.assertIsNone(ev.pick_suite(topic))
 
     def test_question_number_prefix_still_matches(self):
-        """题号开头的常见粘贴格式必须命中（T5e）。
+        """题号开头的常见粘贴格式必须命中。
 
         从 LeetCode 页面复制的题面基本都以题号打头；不剥题号前缀的话，关键词既不在
         标题区开头、又只命中 1 个，会被判成"拿不准"→ 跳过验证（漏判无害，但等于
@@ -565,7 +636,7 @@ class PickSuiteTest(unittest.TestCase):
             self.assertEqual(ev.pick_suite(topic), "two_sum", msg=topic)
 
     def test_two_sum_ii_variant_is_excluded(self):
-        """LeetCode 167「两数之和 II」是语义变体（1-based 下标）：必须不挑套件（T5f 前置）"""
+        """LeetCode 167「两数之和 II」是语义变体（1-based 下标）：必须不挑套件"""
         for topic in ("两数之和 II - 输入有序数组",
                       "167. 两数之和 II",
                       "Two Sum II",
@@ -573,7 +644,7 @@ class PickSuiteTest(unittest.TestCase):
             self.assertIsNone(ev.pick_suite(topic), msg=topic)
 
     def test_two_sum_ii_correct_solution_is_skipped_not_failed(self):
-        """端到端（T5f）：167 的正确解在自动模式下必须 skipped，绝不允许假红。
+        """端到端：167 的正确解在自动模式下必须 skipped，绝不允许假红。
 
         167 要求返回 **1-based** 下标，two_sum 套件的 checker 按 0-based 校验，
         所以一旦误挑 two_sum，这段完全正确的代码会拿到 status=fail
@@ -605,7 +676,7 @@ class PickSuiteTest(unittest.TestCase):
 
 
 class SkippedRenderingTest(unittest.TestCase):
-    """任务 6：自动模式跳过验证时的渲染文案（对应验收脚本 T6a）。
+    """自动模式跳过验证时的渲染文案。
 
     背景：skipped 的真实原因是"没给这个题目注册用例套件"，题目本身是已知的。
     旧实现复用 _UNKNOWN_LABEL（"未知题目"）当标签，CLI 输出成
@@ -620,7 +691,7 @@ class SkippedRenderingTest(unittest.TestCase):
             suite_name=None)
 
     def test_cli_rendering_says_no_suite_registered(self):
-        """CLI 渲染不得出现"未知题目"，且要说清"未注册套件故跳过"（T6a）"""
+        """CLI 渲染不得出现"未知题目"，且要说清"未注册套件故跳过" """
         r = self._skipped()
         self.assertEqual(r.status, "skipped")
         cli_text = ev.format_verification(r)

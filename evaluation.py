@@ -494,13 +494,18 @@ def _terminate_process_tree(proc):
             kill_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         try:
             # /T = 连带子进程树, /F = 强制杀; pythonw 启动时 CREATE_NO_WINDOW 防闪黑框
-            subprocess.run(
+            completed = subprocess.run(
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                 capture_output=True, timeout=10, **kill_kwargs,
             )
+            # taskkill 失败时**不会抛异常**，只返回非零退出码（实测权限不足时为 1，
+            # stderr 报 "ERROR: Access denied."）。不显式检查 returncode，下面的
+            # proc.kill() 兜底就永远不会执行，被评测的死循环进程会残留成孤儿。
+            if completed.returncode != 0:
+                proc.kill()
         except Exception:
             try:
-                proc.kill()          # taskkill 失败时退回直接杀
+                proc.kill()          # taskkill 没跑起来（如命令不存在）时退回直接杀
             except Exception:
                 pass
     else:
@@ -586,7 +591,7 @@ def run_code_verification(summary_text, suite_name=DEFAULT_SUITE, timeout=15,
             suite_label=label,
         )
 
-    # 父进程预校验（批次 1.2）：套件本身有毛病就直接报 error，
+    # 父进程预校验：套件本身有毛病就直接报 error，
     # 绝不放行到子进程——否则空套件会让 runner 空转出"假 pass"。
     problems = validate_suite(suite_name)
     if problems:
