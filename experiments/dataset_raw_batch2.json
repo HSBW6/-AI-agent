@@ -1,0 +1,1395 @@
+[
+  {
+    "suite_key": "roman_to_integer",
+    "label": "罗马数字转整数（LeetCode 13）",
+    "difficulty": "easy",
+    "function_name": "roman_to_integer",
+    "signature": "def roman_to_integer(s: str) -> int",
+    "prompt": "给定一个罗马数字字符串 s，将其转换为整数。罗马数字包含 I(1)、V(5)、X(10)、L(50)、C(100)、D(500)、M(1000)。通常小的数字在大的数字右边表示相加；但以下六种情况表示相减：IV(4)、IX(9)、XL(40)、XC(90)、CD(400)、CM(900)。\n输入：一个罗马数字字符串 s，1 <= len(s) <= 15。\n输出：对应的整数。\n示例 1：输入 s = \"LVIII\"，输出 58（L=50, V=5, III=3）。\n示例 2：输入 s = \"MCMXCIV\"，输出 1994。",
+    "reference": "def roman_to_integer(s):\n    values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n    total = 0\n    prev = 0\n    for ch in reversed(s):\n        v = values[ch]\n        if v < prev:\n            total -= v\n        else:\n            total += v\n        prev = v\n    return total",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "LVIII"
+        ],
+        "expect": 58
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          "MCMXCIV"
+        ],
+        "expect": 1994
+      },
+      {
+        "name": "边界·单字符",
+        "args": [
+          "I"
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·相减最小组合",
+        "args": [
+          "IV"
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·最大3999",
+        "args": [
+          "MMMCMXCIX"
+        ],
+        "expect": 3999
+      }
+    ]
+  },
+  {
+    "suite_key": "majority_element",
+    "label": "多数元素（LeetCode 169）",
+    "difficulty": "easy",
+    "function_name": "majority_element",
+    "signature": "def majority_element(nums: list) -> int",
+    "prompt": "给定一个大小为 n 的数组 nums，返回其中的多数元素。多数元素是指在数组中出现次数大于 n/2 的元素。题目保证多数元素一定存在。\n输入：一个整数数组 nums，1 <= len(nums) <= 100000。\n输出：多数元素的值。\n示例 1：输入 nums = [3,2,3]，输出 3。\n示例 2：输入 nums = [2,2,1,1,1,2,2]，输出 2。",
+    "reference": "def majority_element(nums):\n    candidate = None\n    count = 0\n    for x in nums:\n        if count == 0:\n            candidate = x\n            count = 1\n        elif x == candidate:\n            count += 1\n        else:\n            count -= 1\n    return candidate",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            3,
+            2,
+            3
+          ]
+        ],
+        "expect": 3
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            2,
+            2,
+            1,
+            1,
+            1,
+            2,
+            2
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·全部相同",
+        "args": [
+          [
+            6,
+            6,
+            6,
+            6,
+            6
+          ]
+        ],
+        "expect": 6
+      },
+      {
+        "name": "边界·交替多数",
+        "args": [
+          [
+            5,
+            5,
+            1,
+            5,
+            1,
+            5
+          ]
+        ],
+        "expect": 5
+      }
+    ]
+  },
+  {
+    "suite_key": "happy_number",
+    "label": "快乐数（LeetCode 202）",
+    "difficulty": "easy",
+    "function_name": "happy_number",
+    "signature": "def happy_number(n: int) -> bool",
+    "prompt": "编写一个算法来判断一个数 n 是不是快乐数。快乐数定义为：对于一个正整数，每一次将该数替换为它每个位置上的数字的平方和，然后重复这个过程直到这个数变为 1（此时是快乐数），或者进入一个不包括 1 的无限循环。能变为 1 的数就是快乐数。\n输入：一个正整数 n，1 <= n <= 2^31 - 1。\n输出：布尔值，true 表示快乐数。\n示例 1：输入 n = 19，输出 true（19 -> 82 -> 68 -> 100 -> 1）。\n示例 2：输入 n = 2，输出 false（进入循环 4 -> 16 -> 37 -> 58 -> 89 -> 145 -> 42 -> 20 -> 4）。",
+    "reference": "def happy_number(n):\n    seen = set()\n    while n != 1 and n not in seen:\n        seen.add(n)\n        total = 0\n        while n > 0:\n            d = n % 10\n            total += d * d\n            n //= 10\n        n = total\n    return n == 1",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          19
+        ],
+        "expect": true
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          2
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·输入1",
+        "args": [
+          1
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·整百",
+        "args": [
+          100
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·快乐数7",
+        "args": [
+          7
+        ],
+        "expect": true
+      }
+    ]
+  },
+  {
+    "suite_key": "power_of_three",
+    "label": "3 的幂（LeetCode 326）",
+    "difficulty": "easy",
+    "function_name": "power_of_three",
+    "signature": "def power_of_three(n: int) -> bool",
+    "prompt": "给定一个整数 n，判断它是否是 3 的幂次方（即是否存在整数 x 使得 n == 3^x）。\n输入：一个整数 n，-2^31 <= n <= 2^31 - 1。\n输出：布尔值，true 表示是 3 的幂。\n示例 1：输入 n = 27，输出 true（3^3）。\n示例 2：输入 n = 0，输出 false。\n示例 3：输入 n = -1，输出 false（负数都不是 3 的幂）。",
+    "reference": "def power_of_three(n):\n    if n <= 0:\n        return False\n    while n % 3 == 0:\n        n //= 3\n    return n == 1",
+    "cases": [
+      {
+        "name": "基本·27",
+        "args": [
+          27
+        ],
+        "expect": true
+      },
+      {
+        "name": "基本·非幂45",
+        "args": [
+          45
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·0",
+        "args": [
+          0
+        ],
+        "expect": false
+      },
+      {
+        "name": "边界·1",
+        "args": [
+          1
+        ],
+        "expect": true
+      },
+      {
+        "name": "边界·负数",
+        "args": [
+          -9
+        ],
+        "expect": false
+      }
+    ]
+  },
+  {
+    "suite_key": "excel_sheet_column_title",
+    "label": "Excel 表列名称（LeetCode 168）",
+    "difficulty": "easy",
+    "function_name": "excel_sheet_column_title",
+    "signature": "def excel_sheet_column_title(column: int) -> str",
+    "prompt": "给定一个正整数 columnNumber，返回它在 Excel 表格中对应的列标题。Excel 列标题规则：1 -> A，2 -> B，26 -> Z，27 -> AA，28 -> AB。\n输入：一个正整数 columnNumber，1 <= columnNumber <= 2^31 - 1。\n输出：对应的列标题字符串。\n示例 1：输入 columnNumber = 1，输出 \"A\"。\n示例 2：输入 columnNumber = 28，输出 \"AB\"。\n示例 3：输入 columnNumber = 701，输出 \"ZY\"。",
+    "reference": "def excel_sheet_column_title(column):\n    res = []\n    while column > 0:\n        column -= 1\n        res.append(chr(ord('A') + column % 26))\n        column //= 26\n    return ''.join(reversed(res))",
+    "cases": [
+      {
+        "name": "基本·1",
+        "args": [
+          1
+        ],
+        "expect": "A"
+      },
+      {
+        "name": "基本·28",
+        "args": [
+          28
+        ],
+        "expect": "AB"
+      },
+      {
+        "name": "边界·26",
+        "args": [
+          26
+        ],
+        "expect": "Z"
+      },
+      {
+        "name": "边界·52",
+        "args": [
+          52
+        ],
+        "expect": "AZ"
+      },
+      {
+        "name": "边界·702",
+        "args": [
+          702
+        ],
+        "expect": "ZZ"
+      }
+    ]
+  },
+  {
+    "suite_key": "hamming_weight",
+    "label": "位 1 的个数（LeetCode 191）",
+    "difficulty": "easy",
+    "function_name": "hamming_weight",
+    "signature": "def hamming_weight(n: int) -> int",
+    "prompt": "编写一个函数，输入是一个非负整数 n（以十进制形式给出），返回其二进制表示中数字位数为 1 的个数（即汉明重量）。\n输入：一个非负整数 n，0 <= n <= 2^31 - 1。\n输出：一个整数，表示二进制中 1 的个数。\n示例 1：输入 n = 11（二进制 1011），输出 3。\n示例 2：输入 n = 128（二进制 10000000），输出 1。\n示例 3：输入 n = 0，输出 0。",
+    "reference": "def hamming_weight(n):\n    cnt = 0\n    while n > 0:\n        cnt += n & 1\n        n >>= 1\n    return cnt",
+    "cases": [
+      {
+        "name": "基本·11",
+        "args": [
+          11
+        ],
+        "expect": 3
+      },
+      {
+        "name": "基本·128",
+        "args": [
+          128
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·0",
+        "args": [
+          0
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·7",
+        "args": [
+          7
+        ],
+        "expect": 3
+      },
+      {
+        "name": "边界·15",
+        "args": [
+          15
+        ],
+        "expect": 4
+      }
+    ]
+  },
+  {
+    "suite_key": "rotate_array",
+    "label": "旋转数组（LeetCode 189）",
+    "difficulty": "medium",
+    "function_name": "rotate_array",
+    "signature": "def rotate_array(nums: list, k: int) -> list",
+    "prompt": "给定一个整数数组 nums 和一个非负整数 k，将数组中的元素向右轮转 k 个位置，并返回轮转后的新数组（不要修改原数组）。\n输入：第一行一个整数数组 nums，1 <= len(nums) <= 100000，元素范围 -2^31 <= nums[i] <= 2^31 - 1；第二行一个非负整数 k，0 <= k <= 10^5。\n输出：轮转后的新数组。\n示例 1：输入 nums = [1,2,3,4,5,6,7]，k = 3，输出 [5,6,7,1,2,3,4]。\n示例 2：输入 nums = [-1,-100,3,99]，k = 2，输出 [3,99,-1,-100]。",
+    "reference": "def rotate_array(nums, k):\n    n = len(nums)\n    if n == 0:\n        return []\n    k = k % n\n    return nums[n - k:] + nums[:n - k]",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          3
+        ],
+        "expect": [
+          5,
+          6,
+          7,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            -1,
+            -100,
+            3,
+            99
+          ],
+          2
+        ],
+        "expect": [
+          3,
+          99,
+          -1,
+          -100
+        ]
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ],
+          0
+        ],
+        "expect": [
+          1
+        ]
+      },
+      {
+        "name": "边界·k为全长",
+        "args": [
+          [
+            1,
+            2
+          ],
+          2
+        ],
+        "expect": [
+          1,
+          2
+        ]
+      },
+      {
+        "name": "边界·k大于全长",
+        "args": [
+          [
+            1,
+            2,
+            3
+          ],
+          4
+        ],
+        "expect": [
+          3,
+          1,
+          2
+        ]
+      }
+    ]
+  },
+  {
+    "suite_key": "product_except_self",
+    "label": "除自身以外数组的乘积（LeetCode 238）",
+    "difficulty": "medium",
+    "function_name": "product_except_self",
+    "signature": "def product_except_self(nums: list) -> list",
+    "prompt": "给定一个整数数组 nums，返回一个新数组 answer，其中 answer[i] 等于 nums 中除 nums[i] 之外其余各元素的乘积。题目保证 32 位整数范围内。请不要使用除法，并在 O(n) 时间复杂度内完成。\n输入：一个整数数组 nums，2 <= len(nums) <= 100000，元素范围 -30 <= nums[i] <= 30。\n输出：乘积数组。\n示例 1：输入 nums = [1,2,3,4]，输出 [24,12,8,6]。\n示例 2：输入 nums = [-1,1,0,-3,3]，输出 [0,0,9,0,0]。",
+    "reference": "def product_except_self(nums):\n    n = len(nums)\n    res = [1] * n\n    left = 1\n    for i in range(n):\n        res[i] = left\n        left *= nums[i]\n    right = 1\n    for i in range(n - 1, -1, -1):\n        res[i] *= right\n        right *= nums[i]\n    return res",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ]
+        ],
+        "expect": [
+          24,
+          12,
+          8,
+          6
+        ]
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            -1,
+            1,
+            0,
+            -3,
+            3
+          ]
+        ],
+        "expect": [
+          0,
+          0,
+          9,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "边界·两元素",
+        "args": [
+          [
+            2,
+            3
+          ]
+        ],
+        "expect": [
+          3,
+          2
+        ]
+      },
+      {
+        "name": "边界·多个零",
+        "args": [
+          [
+            0,
+            4,
+            0
+          ]
+        ],
+        "expect": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "边界·全部相同",
+        "args": [
+          [
+            2,
+            2,
+            2
+          ]
+        ],
+        "expect": [
+          4,
+          4,
+          4
+        ]
+      }
+    ]
+  },
+  {
+    "suite_key": "merge_intervals",
+    "label": "合并区间（LeetCode 56）",
+    "difficulty": "medium",
+    "function_name": "merge_intervals",
+    "signature": "def merge_intervals(intervals: list) -> list",
+    "prompt": "给定一个区间集合 intervals，其中 intervals[i] = [start_i, end_i] 且 start_i <= end_i，合并所有重叠的区间，并返回一个不重叠的区间数组，该数组需恰好覆盖输入中的所有区间。\n输入：一个二维数组 intervals，1 <= len(intervals) <= 10000，每个区间的端点满足 -10^4 <= start_i <= end_i <= 10^4。\n输出：合并后的不重叠区间二维数组。\n示例 1：输入 intervals = [[1,3],[2,6],[8,10],[15,18]]，输出 [[1,6],[8,10],[15,18]]。\n示例 2：输入 intervals = [[1,4],[4,5]]，输出 [[1,5]]（端点相接视为重叠）。",
+    "reference": "def merge_intervals(intervals):\n    if not intervals:\n        return []\n    intervals = sorted(intervals, key=lambda x: x[0])\n    res = [list(intervals[0])]\n    for i in range(1, len(intervals)):\n        s, e = intervals[i]\n        if s <= res[-1][1]:\n            if e > res[-1][1]:\n                res[-1][1] = e\n        else:\n            res.append([s, e])\n    return res",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              8,
+              10
+            ],
+            [
+              15,
+              18
+            ]
+          ]
+        ],
+        "expect": [
+          [
+            1,
+            6
+          ],
+          [
+            8,
+            10
+          ],
+          [
+            15,
+            18
+          ]
+        ]
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            [
+              1,
+              4
+            ],
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "expect": [
+          [
+            1,
+            5
+          ]
+        ]
+      },
+      {
+        "name": "边界·单区间",
+        "args": [
+          [
+            [
+              1,
+              4
+            ]
+          ]
+        ],
+        "expect": [
+          [
+            1,
+            4
+          ]
+        ]
+      },
+      {
+        "name": "边界·完全包含",
+        "args": [
+          [
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        ],
+        "expect": [
+          [
+            1,
+            4
+          ]
+        ]
+      },
+      {
+        "name": "边界·互不相交",
+        "args": [
+          [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        ],
+        "expect": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            5,
+            6
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "suite_key": "multiply_strings",
+    "label": "字符串相乘（LeetCode 43）",
+    "difficulty": "medium",
+    "function_name": "multiply_strings",
+    "signature": "def multiply_strings(num1: str, num2: str) -> str",
+    "prompt": "给定两个以字符串形式表示的非负整数 num1 和 num2，返回 num1 和 num2 的乘积，乘积也以字符串形式表示。注意：不能使用任何内置的大整数库或直接将输入转换为整数，需要按位模拟乘法。\n输入：两行字符串 num1 和 num2，长度均满足 1 <= len <= 200，且不含前导零（除非数字本身是 0）。\n输出：乘积字符串。\n示例 1：输入 num1 = \"2\"，num2 = \"3\"，输出 \"6\"。\n示例 2：输入 num1 = \"123\"，num2 = \"456\"，输出 \"56088\"。",
+    "reference": "def multiply_strings(num1, num2):\n    if num1 == '0' or num2 == '0':\n        return '0'\n    n1 = len(num1)\n    n2 = len(num2)\n    res = [0] * (n1 + n2)\n    for i in range(n1 - 1, -1, -1):\n        a = ord(num1[i]) - 48\n        for j in range(n2 - 1, -1, -1):\n            b = ord(num2[j]) - 48\n            pos = i + j + 1\n            cur = res[pos] + a * b\n            res[pos] = cur % 10\n            res[pos - 1] += cur // 10\n    start = 0\n    while start < len(res) - 1 and res[start] == 0:\n        start += 1\n    return ''.join(str(d) for d in res[start:])",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "2",
+          "3"
+        ],
+        "expect": "6"
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          "123",
+          "456"
+        ],
+        "expect": "56088"
+      },
+      {
+        "name": "边界·含零",
+        "args": [
+          "0",
+          "52"
+        ],
+        "expect": "0"
+      },
+      {
+        "name": "边界·个位相乘",
+        "args": [
+          "7",
+          "9"
+        ],
+        "expect": "63"
+      },
+      {
+        "name": "边界·最大两位数",
+        "args": [
+          "99",
+          "99"
+        ],
+        "expect": "9801"
+      }
+    ]
+  },
+  {
+    "suite_key": "min_subarray_len",
+    "label": "长度最小的子数组（LeetCode 209）",
+    "difficulty": "medium",
+    "function_name": "min_subarray_len",
+    "signature": "def min_subarray_len(target: int, nums: list) -> int",
+    "prompt": "给定一个含有 n 个正整数的数组 nums 和一个正整数 target，找出该数组中满足其和大于等于 target 的长度最小的连续子数组，并返回其长度。如果不存在符合条件的子数组，返回 0。\n输入：第一行一个正整数 target，1 <= target <= 10^9；第二行一个正整数数组 nums，1 <= len(nums) <= 100000，元素范围 1 <= nums[i] <= 10^5。\n输出：最小长度整数；不存在时返回 0。\n示例 1：输入 target = 7，nums = [2,3,1,2,4,3]，输出 2（子数组 [4,3]）。\n示例 2：输入 target = 4，nums = [1,4,4]，输出 1。\n示例 3：输入 target = 11，nums = [1,1,1,1,1,1,1,1]，输出 0。",
+    "reference": "def min_subarray_len(target, nums):\n    left = 0\n    total = 0\n    best = len(nums) + 1\n    for right in range(len(nums)):\n        total += nums[right]\n        while total >= target:\n            cur = right - left + 1\n            if cur < best:\n                best = cur\n            total -= nums[left]\n            left += 1\n    return 0 if best == len(nums) + 1 else best",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          7,
+          [
+            2,
+            3,
+            1,
+            2,
+            4,
+            3
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          4,
+          [
+            1,
+            4,
+            4
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·无法满足",
+        "args": [
+          11,
+          [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·target超大",
+        "args": [
+          100,
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·尾部满足",
+        "args": [
+          6,
+          [
+            2,
+            3,
+            1,
+            1,
+            1,
+            5
+          ]
+        ],
+        "expect": 2
+      }
+    ]
+  },
+  {
+    "suite_key": "two_sum_ii",
+    "label": "两数之和 II（LeetCode 167）",
+    "difficulty": "medium",
+    "function_name": "two_sum_ii",
+    "signature": "def two_sum_ii(numbers: list, target: int) -> list",
+    "prompt": "给你一个下标从 1 开始的整数数组 numbers（已按非递减顺序排序）和一个整数 target，请找出两个数使其和等于 target，返回这两个数的下标（1-based，小的在前）。题目保证有且仅有一个解，且同一个元素不能使用两次。\n输入：第一行一个已排序整数数组 numbers，2 <= len(numbers) <= 30000；第二行一个整数 target。\n输出：两个下标组成的数组 [index1, index2]，其中 index1 < index2。\n示例 1：输入 numbers = [2,7,11,15]，target = 9，输出 [1,2]。\n示例 2：输入 numbers = [2,3,4]，target = 6，输出 [1,3]。\n示例 3：输入 numbers = [-1,0]，target = -1，输出 [1,2]。",
+    "reference": "def two_sum_ii(numbers, target):\n    lo = 0\n    hi = len(numbers) - 1\n    while lo < hi:\n        s = numbers[lo] + numbers[hi]\n        if s == target:\n            return [lo + 1, hi + 1]\n        if s < target:\n            lo += 1\n        else:\n            hi -= 1\n    return []",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            2,
+            7,
+            11,
+            15
+          ],
+          9
+        ],
+        "expect": [
+          1,
+          2
+        ]
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            2,
+            3,
+            4
+          ],
+          6
+        ],
+        "expect": [
+          1,
+          3
+        ]
+      },
+      {
+        "name": "基本·负数",
+        "args": [
+          [
+            -1,
+            0
+          ],
+          -1
+        ],
+        "expect": [
+          1,
+          2
+        ]
+      },
+      {
+        "name": "边界·重复元素",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            4,
+            9,
+            56,
+            90
+          ],
+          8
+        ],
+        "expect": [
+          4,
+          5
+        ]
+      },
+      {
+        "name": "边界·两端取值",
+        "args": [
+          [
+            5,
+            25,
+            75
+          ],
+          100
+        ],
+        "expect": [
+          2,
+          3
+        ]
+      }
+    ]
+  },
+  {
+    "suite_key": "daily_temperatures",
+    "label": "每日温度（LeetCode 739）",
+    "difficulty": "medium",
+    "function_name": "daily_temperatures",
+    "signature": "def daily_temperatures(temperatures: list) -> list",
+    "prompt": "给定一个整数数组 temperatures，表示每天的温度，请返回一个数组 answer，其中 answer[i] 是指对于第 i 天，下一个更高温度出现在几天后。如果气温在这之后都不会升高，请在该位置用 0 来代替。\n输入：一个整数数组 temperatures，1 <= len(temperatures) <= 100000，元素范围 30 <= temperatures[i] <= 100。\n输出：等长的整数数组。\n示例 1：输入 temperatures = [73,74,75,71,69,72,76,73]，输出 [1,1,4,2,1,1,0,0]。\n示例 2：输入 temperatures = [30,40,50,60]，输出 [1,1,1,0]。",
+    "reference": "def daily_temperatures(temperatures):\n    n = len(temperatures)\n    res = [0] * n\n    stack = []\n    for i in range(n):\n        while stack and temperatures[i] > temperatures[stack[-1]]:\n            j = stack.pop()\n            res[j] = i - j\n        stack.append(i)\n    return res",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            73,
+            74,
+            75,
+            71,
+            69,
+            72,
+            76,
+            73
+          ]
+        ],
+        "expect": [
+          1,
+          1,
+          4,
+          2,
+          1,
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            30,
+            40,
+            50,
+            60
+          ]
+        ],
+        "expect": [
+          1,
+          1,
+          1,
+          0
+        ]
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            30
+          ]
+        ],
+        "expect": [
+          0
+        ]
+      },
+      {
+        "name": "边界·严格递减",
+        "args": [
+          [
+            60,
+            50,
+            40,
+            30
+          ]
+        ],
+        "expect": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "边界·全部相同",
+        "args": [
+          [
+            30,
+            30,
+            30
+          ]
+        ],
+        "expect": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  {
+    "suite_key": "decode_string",
+    "label": "字符串解码（LeetCode 394）",
+    "difficulty": "medium",
+    "function_name": "decode_string",
+    "signature": "def decode_string(s: str) -> str",
+    "prompt": "给定一个经过编码的字符串 s，返回解码后的字符串。编码规则为 k[encoded_string]，表示方括号内部的 encoded_string 正好重复 k 次（k 为正整数）。可以认为输入字符串总是有效的：无额外空格、方括号格式正确。数字只表示重复次数，编码规则不会产生类似 3a 或 2[4] 的输入。\n输入：一个编码字符串 s，1 <= len(s) <= 30。\n输出：解码后的字符串。\n示例 1：输入 s = \"3[a]2[bc]\"，输出 \"aaabcbc\"。\n示例 2：输入 s = \"3[a2[c]]\"，输出 \"accaccacc\"。\n示例 3：输入 s = \"2[abc]3[cd]ef\"，输出 \"abcabccdcdcdef\"。",
+    "reference": "def decode_string(s):\n    num_stack = []\n    str_stack = []\n    cur = ''\n    num = 0\n    for ch in s:\n        if ch.isdigit():\n            num = num * 10 + ord(ch) - 48\n        elif ch == '[':\n            num_stack.append(num)\n            str_stack.append(cur)\n            cur = ''\n            num = 0\n        elif ch == ']':\n            prev = str_stack.pop()\n            k = num_stack.pop()\n            cur = prev + cur * k\n        else:\n            cur += ch\n    return cur",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "3[a]2[bc]"
+        ],
+        "expect": "aaabcbc"
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          "3[a2[c]]"
+        ],
+        "expect": "accaccacc"
+      },
+      {
+        "name": "基本·官方示例3",
+        "args": [
+          "2[abc]3[cd]ef"
+        ],
+        "expect": "abcabccdcdcdef"
+      },
+      {
+        "name": "边界·无编码",
+        "args": [
+          "a"
+        ],
+        "expect": "a"
+      },
+      {
+        "name": "边界·单层重复",
+        "args": [
+          "3[a]"
+        ],
+        "expect": "aaa"
+      }
+    ]
+  },
+  {
+    "suite_key": "first_missing_positive",
+    "label": "缺失的第一个正数（LeetCode 41）",
+    "difficulty": "hard",
+    "function_name": "first_missing_positive",
+    "signature": "def first_missing_positive(nums: list) -> int",
+    "prompt": "给定一个未排序的整数数组 nums，请找出其中没有出现的最小的正整数。要求算法时间复杂度 O(n) 且只使用常数级别的额外空间。\n输入：一个整数数组 nums，1 <= len(nums) <= 100000，元素范围 -2^31 <= nums[i] <= 2^31 - 1。\n输出：缺失的最小正整数。\n示例 1：输入 nums = [1,2,0]，输出 3。\n示例 2：输入 nums = [3,4,-1,1]，输出 2。\n示例 3：输入 nums = [7,8,9,11,12]，输出 1。",
+    "reference": "def first_missing_positive(nums):\n    n = len(nums)\n    i = 0\n    while i < n:\n        x = nums[i]\n        if 1 <= x <= n and nums[x - 1] != x:\n            nums[x - 1], nums[i] = nums[i], nums[x - 1]\n        else:\n            i += 1\n    for i in range(n):\n        if nums[i] != i + 1:\n            return i + 1\n    return n + 1",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            1,
+            2,
+            0
+          ]
+        ],
+        "expect": 3
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            1,
+            -1,
+            3,
+            4
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·全为负数",
+        "args": [
+          [
+            -5,
+            -1,
+            -3
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·连续完整",
+        "args": [
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        "expect": 4
+      }
+    ]
+  },
+  {
+    "suite_key": "trapping_rain_water",
+    "label": "接雨水（LeetCode 42）",
+    "difficulty": "hard",
+    "function_name": "trapping_rain_water",
+    "signature": "def trapping_rain_water(height: list) -> int",
+    "prompt": "给定 n 个非负整数表示每个宽度为 1 的柱子的高度图，计算按此排列的柱子下雨之后能接多少雨水。\n输入：一个非负整数数组 height，1 <= len(height) <= 2*10^4，元素范围 0 <= height[i] <= 10^5。\n输出：能接的雨水总量。\n示例 1：输入 height = [0,1,0,2,1,0,1,3,2,1,2,1]，输出 6。\n示例 2：输入 height = [4,2,0,3,2,5]，输出 9。",
+    "reference": "def trapping_rain_water(height):\n    n = len(height)\n    left = 0\n    right = n - 1\n    left_max = 0\n    right_max = 0\n    water = 0\n    while left < right:\n        if height[left] < height[right]:\n            if height[left] >= left_max:\n                left_max = height[left]\n            else:\n                water += left_max - height[left]\n            left += 1\n        else:\n            if height[right] >= right_max:\n                right_max = height[right]\n            else:\n                water += right_max - height[right]\n            right -= 1\n    return water",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            0,
+            1,
+            0,
+            2,
+            1,
+            0,
+            1,
+            3,
+            2,
+            1,
+            2,
+            1
+          ]
+        ],
+        "expect": 6
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            4,
+            2,
+            0,
+            3,
+            2,
+            5
+          ]
+        ],
+        "expect": 9
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expect": 0
+      },
+      {
+        "name": "边界·两柱夹水",
+        "args": [
+          [
+            2,
+            0,
+            2
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·严格递增",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ]
+        ],
+        "expect": 0
+      }
+    ]
+  },
+  {
+    "suite_key": "largest_rectangle_in_histogram",
+    "label": "柱状图中最大的矩形（LeetCode 84）",
+    "difficulty": "hard",
+    "function_name": "largest_rectangle_in_histogram",
+    "signature": "def largest_rectangle_in_histogram(heights: list) -> int",
+    "prompt": "给定 n 个非负整数，用来表示柱状图中各个柱子的高度，每个柱子彼此相邻，且宽度为 1。求在该柱状图中能够勾勒出来的矩形的最大面积。\n输入：一个非负整数数组 heights，1 <= len(heights) <= 10^5，元素范围 0 <= heights[i] <= 10^4。\n输出：最大矩形面积。\n示例 1：输入 heights = [2,1,5,6,2,3]，输出 10（最大的矩形由高度 5、6 的柱子构成，面积 5*2=10）。\n示例 2：输入 heights = [2,4]，输出 4（2*2 或 4*1）。",
+    "reference": "def largest_rectangle_in_histogram(heights):\n    stack = []\n    best = 0\n    n = len(heights)\n    for i in range(n + 1):\n        h = heights[i] if i < n else 0\n        while stack and heights[stack[-1]] > h:\n            idx = stack.pop()\n            height = heights[idx]\n            left = stack[-1] if stack else -1\n            width = i - left - 1\n            area = height * width\n            if area > best:\n                best = area\n        stack.append(i)\n    return best",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            2,
+            1,
+            5,
+            6,
+            2,
+            3
+          ]
+        ],
+        "expect": 10
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            2,
+            4
+          ]
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            2
+          ]
+        ],
+        "expect": 2
+      },
+      {
+        "name": "边界·全部相同",
+        "args": [
+          [
+            1,
+            1,
+            1,
+            1
+          ]
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·含零分隔",
+        "args": [
+          [
+            3,
+            0,
+            3
+          ]
+        ],
+        "expect": 3
+      }
+    ]
+  },
+  {
+    "suite_key": "minimum_window_substring",
+    "label": "最小覆盖子串（LeetCode 76）",
+    "difficulty": "hard",
+    "function_name": "minimum_window_substring",
+    "signature": "def minimum_window_substring(s: str, t: str) -> str",
+    "prompt": "给定两个字符串 s 和 t，返回 s 中包含 t 的全部字符（同一字符需要与 t 中出现的次数一致）的最短子串。如果 s 中不存在这样的子串，返回空字符串 \"\"。如果存在多个答案，返回其中任意一个即可。\n输入：两行字符串 s 和 t，1 <= len(s), len(t) <= 10^5，字符为英文大小写字母。\n输出：最短覆盖子串，不存在时返回空字符串。\n示例 1：输入 s = \"ADOBECODEBANC\"，t = \"ABC\"，输出 \"BANC\"。\n示例 2：输入 s = \"a\"，t = \"a\"，输出 \"a\"。\n示例 3：输入 s = \"a\"，t = \"aa\"，输出 \"\"。",
+    "reference": "def minimum_window_substring(s, t):\n    need = {}\n    for ch in t:\n        need[ch] = need.get(ch, 0) + 1\n    missing = len(t)\n    left = 0\n    best = ''\n    best_len = len(s) + 1\n    for right in range(len(s)):\n        ch = s[right]\n        if ch in need:\n            if need[ch] > 0:\n                missing -= 1\n            need[ch] -= 1\n        while missing == 0:\n            cur = right - left + 1\n            if cur < best_len:\n                best_len = cur\n                best = s[left:right + 1]\n            lch = s[left]\n            if lch in need:\n                need[lch] += 1\n                if need[lch] > 0:\n                    missing += 1\n            left += 1\n    return best",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          "ADOBECODEBANC",
+          "ABC"
+        ],
+        "expect": "BANC"
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          "a",
+          "a"
+        ],
+        "expect": "a"
+      },
+      {
+        "name": "边界·无法覆盖",
+        "args": [
+          "a",
+          "aa"
+        ],
+        "expect": ""
+      },
+      {
+        "name": "边界·恰好相等",
+        "args": [
+          "aa",
+          "aa"
+        ],
+        "expect": "aa"
+      },
+      {
+        "name": "边界·t为单字符",
+        "args": [
+          "ab",
+          "b"
+        ],
+        "expect": "b"
+      }
+    ]
+  },
+  {
+    "suite_key": "candy",
+    "label": "分发糖果（LeetCode 135）",
+    "difficulty": "hard",
+    "function_name": "candy",
+    "signature": "def candy(ratings: list) -> int",
+    "prompt": "n 个孩子站成一排，给定一个整数数组 ratings 表示每个孩子的评分。你需要按照以下要求给孩子们分发糖果：每个孩子至少分到 1 颗糖果；相邻两个孩子中评分更高的孩子必须获得更多的糖果。请计算并返回需要准备的最少糖果数目。\n输入：一个整数数组 ratings，1 <= len(ratings) <= 2*10^4，元素范围 0 <= ratings[i] <= 2*10^4。\n输出：最少糖果总数。\n示例 1：输入 ratings = [1,0,2]，输出 5（分发 2,1,2）。\n示例 2：输入 ratings = [1,2,2]，输出 4（分发 1,2,1）。",
+    "reference": "def candy(ratings):\n    n = len(ratings)\n    candies = [1] * n\n    for i in range(1, n):\n        if ratings[i] > ratings[i - 1]:\n            candies[i] = candies[i - 1] + 1\n    for i in range(n - 2, -1, -1):\n        if ratings[i] > ratings[i + 1] and candies[i] <= candies[i + 1]:\n            candies[i] = candies[i + 1] + 1\n    return sum(candies)",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            1,
+            0,
+            2
+          ]
+        ],
+        "expect": 5
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            1,
+            2,
+            2
+          ]
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expect": 1
+      },
+      {
+        "name": "边界·全部相同",
+        "args": [
+          [
+            2,
+            2,
+            2
+          ]
+        ],
+        "expect": 3
+      },
+      {
+        "name": "边界·山谷形",
+        "args": [
+          [
+            1,
+            3,
+            2,
+            2,
+            1
+          ]
+        ],
+        "expect": 7
+      }
+    ]
+  },
+  {
+    "suite_key": "split_array_largest_sum",
+    "label": "分割数组的最大值（LeetCode 410）",
+    "difficulty": "hard",
+    "function_name": "split_array_largest_sum",
+    "signature": "def split_array_largest_sum(nums: list, k: int) -> int",
+    "prompt": "给定一个非负整数数组 nums 和一个整数 k，将数组分割成 k 个非空的连续子数组，使得这 k 个子数组各自和的最大值最小。请返回这个最小的最大子数组和。\n输入：第一行一个非负整数数组 nums，1 <= len(nums) <= 1000，元素范围 0 <= nums[i] <= 10^6；第二行一个整数 k，1 <= k <= len(nums)。\n输出：最小的最大子数组和。\n示例 1：输入 nums = [7,2,5,10,8]，k = 2，输出 18（分割为 [7,2,5] 和 [10,8]，最大和为 18）。\n示例 2：输入 nums = [1,2,3,4,5]，k = 2，输出 9（分割为 [1,2,3] 和 [4,5]）。",
+    "reference": "def split_array_largest_sum(nums, k):\n    def can_split(limit):\n        cnt = 1\n        cur = 0\n        for x in nums:\n            if cur + x > limit:\n                cnt += 1\n                cur = x\n            else:\n                cur += x\n        return cnt <= k\n    lo = max(nums)\n    hi = sum(nums)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if can_split(mid):\n            hi = mid\n        else:\n            lo = mid + 1\n    return lo",
+    "cases": [
+      {
+        "name": "基本·官方示例1",
+        "args": [
+          [
+            7,
+            2,
+            5,
+            10,
+            8
+          ],
+          2
+        ],
+        "expect": 18
+      },
+      {
+        "name": "基本·官方示例2",
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          2
+        ],
+        "expect": 9
+      },
+      {
+        "name": "边界·单元素",
+        "args": [
+          [
+            7
+          ],
+          1
+        ],
+        "expect": 7
+      },
+      {
+        "name": "边界·k等于长度",
+        "args": [
+          [
+            1,
+            4,
+            4
+          ],
+          3
+        ],
+        "expect": 4
+      },
+      {
+        "name": "边界·k等于1",
+        "args": [
+          [
+            1,
+            4,
+            4
+          ],
+          1
+        ],
+        "expect": 9
+      }
+    ]
+  }
+]
