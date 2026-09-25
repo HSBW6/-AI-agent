@@ -45,7 +45,7 @@ from evaluation import run_code_verification  # noqa: E402
 # ---------------------------------------------------------------- 常量
 
 MODES = ("single", "single_self_correct", "single_self_correct_blind",
-         "homogeneous", "heterogeneous")
+         "homogeneous", "heterogeneous", "debate_synth", "debate_direct")
 
 # 产出最终代码的角色：与产品里的总结者是同一人设（中立主持人，人设要求
 # "给出完整可运行代码，用 ```python 包裹"），保证四配置对齐。
@@ -312,6 +312,57 @@ def run_debate(problem, providers=("deepseek", "zhipu"), rounds=3,
     return summary, captured
 
 
+def run_manual_debate(problem, providers=("deepseek", "deepseek"), rounds=3,
+                      temperature=None, synthesis=True):
+    """实验层手搓的双模型讨论，用于精确隔离「是否要求综合双方观点」。
+
+    为什么不直接用 run_discussion：产品路径里总结者的指令写死在 chat.py
+    （"先分条总结讨论要点，再给代码"），**无法只改指令而不动产品代码**。
+    本函数在实验层复刻讨论流程（不做滚动摘要——题目短、上下文够用），
+    使 debate_synth / debate_direct 成为**唯一差别只在总结指令**的严格对照。
+
+    synthesis=True  → 要求先总结双方观点与分歧（对应产品行为）
+    synthesis=False → 要求忽略分歧，直接给出自认为正确的代码
+    """
+    agents = [_get_agent(DEBATE_ROLES[i], providers[i], temperature)
+              for i in range(len(providers))]
+    # ⚠️ 题面必须喂进每一次发言：Agent.say 只把 text 包装成"对话记录"，
+    # 它不会自己带上题目。漏掉题面会让发言者凭空编一道题（实测踩过：
+    # 有效括号的题被讨论成了"环形数组最大子数组和"）。
+    base = build_solver_prompt(problem)
+    lines = []
+    for _rnd in range(1, rounds + 1):
+        for role, agent in zip(DEBATE_ROLES, agents):
+            text = base if not lines else (base + "\n\n【讨论记录】\n" + "\n".join(lines))
+            reply = agent.say(
+                text,
+                extra_instruction=(
+                    "现在轮到你（%s）发言。这是一道算法题，请给出你的解题思路、"
+                    "关键实现细节与边界情况；先针对上一位发言者的观点表态"
+                    "（同意要说明认可哪一步，反驳要指出具体漏洞）。"
+                    "只讲思路与要点，**不要输出完整代码**——最终代码由总结者统一给出。" % role
+                ),
+                max_tokens=config.MAX_TOKENS,
+            )
+            lines.append("%s：%s" % (role, reply))
+
+    summarizer = _get_agent(SOLVER_ROLE, "deepseek", temperature)
+    transcript = base + "\n\n【讨论记录】\n" + "\n".join(lines)
+    if synthesis:
+        instruction = ("讨论到此结束，请作为主持人输出最终总结："
+                       "先用分条列表简要总结讨论要点与分歧，"
+                       "再根据上面的讨论给出这道题的具体可运行代码"
+                       "（Python，用代码块输出，代码要完整、可直接运行）。")
+    else:
+        instruction = ("讨论到此结束。请**忽略讨论中的分歧与话术**，"
+                       "直接给出你认为正确的这道题的完整 Python 代码"
+                       "（只用一个代码块，完整可直接运行）。"
+                       "不要写讨论总结，不要复述双方观点。")
+    summary = summarizer.say(transcript, extra_instruction=instruction,
+                             max_tokens=config.SUMMARIZER_MAX_TOKENS)
+    return summary, run_code_verification(summary, suite_name=problem["suite_key"])
+
+
 def _camel_variants(fn):
     """生成 camelCase 变体，减少"模型写了 validParentheses 但引擎只认
     valid_parentheses"这类接口假失败。"""
@@ -387,6 +438,14 @@ def run_one(mode, problem, **kwargs):
             temperature=kwargs.get("temperature"),
             max_retries=kwargs.get("max_retries", 2),
             max_tokens=kwargs.get("max_tokens"),
+        )
+    elif mode in ("debate_synth", "debate_direct"):
+        # 两个配置的讨论过程完全相同，唯一差别是总结者是否被要求"综合双方观点"
+        reply, verification = run_manual_debate(
+            problem, providers=("deepseek", "deepseek"),
+            rounds=kwargs.get("rounds", 3),
+            temperature=kwargs.get("temperature"),
+            synthesis=(mode == "debate_synth"),
         )
     elif mode == "homogeneous":
         # 两个参与者都用 --provider 指定的同一厂商（默认 deepseek）。
