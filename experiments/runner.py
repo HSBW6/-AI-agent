@@ -44,7 +44,8 @@ from evaluation import run_code_verification  # noqa: E402
 
 # ---------------------------------------------------------------- 常量
 
-MODES = ("single", "single_self_correct", "homogeneous", "heterogeneous")
+MODES = ("single", "single_self_correct", "single_self_correct_blind",
+         "homogeneous", "heterogeneous")
 
 # 产出最终代码的角色：与产品里的总结者是同一人设（中立主持人，人设要求
 # "给出完整可运行代码，用 ```python 包裹"），保证四配置对齐。
@@ -243,6 +244,46 @@ def run_single_self_correct(problem, provider="deepseek", temperature=None,
     return reply, result, attempts
 
 
+def build_feedback_blind(attempt_no):
+    """盲重试的反馈：只说"没通过"，**不给任何失败细节**。
+
+    与 build_feedback 的句式结构和长度刻意保持一致，使它成为严格对照组——
+    两个配置之间唯一的差异就是"有没有真值信息"（哪个用例 / 期望值 / 实际值）。
+    """
+    return (
+        "\n\n【第 %d 次提交未通过测试，请重新检查后给出完整代码】\n"
+        "你没有通过全部测试用例。请重新审视边界情况与实现逻辑，"
+        "给出修正后的完整代码（仍然只用一个 ```python 代码块）。"
+        % attempt_no
+    )
+
+
+def run_single_self_correct_blind(problem, provider="deepseek", temperature=None,
+                                  max_retries=2, max_tokens=None):
+    """单模型盲重试：与 single_self_correct 唯一的差别是不提供失败细节。
+
+    用途：分离两个可能的因果——(a) 提升只是来自"多试一次"；
+    (b) 提升来自"具体错误信息"这个真值反馈。
+    若盲重试显著低于自纠，说明**反馈的具体性**才是关键，而非重试次数本身。
+    """
+    agent = _get_agent(SOLVER_ROLE, provider, temperature)
+    base = build_solver_prompt(problem)
+    text = base
+    reply, result, attempts = "", None, 0
+    while attempts <= max_retries:
+        attempts += 1
+        reply = agent.say(
+            text,
+            extra_instruction="这是一道独立的算法题（没有讨论记录），请直接给出最终实现。",
+            max_tokens=max_tokens or config.SUMMARIZER_MAX_TOKENS,
+        )
+        result = run_code_verification(reply, suite_name=problem["suite_key"])
+        if _g(result, "passed") or _g(result, "status") in ("skipped",):
+            break
+        text = base + build_feedback_blind(attempts)
+    return reply, result, attempts
+
+
 def run_debate(problem, providers=("deepseek", "zhipu"), rounds=3,
                summarizer_provider="deepseek", temperature=None):
     """双模型讨论后由总结者产出代码。
@@ -333,6 +374,14 @@ def run_one(mode, problem, **kwargs):
         )
     elif mode == "single_self_correct":
         reply, verification, attempts = run_single_self_correct(
+            problem,
+            provider=kwargs.get("provider", "deepseek"),
+            temperature=kwargs.get("temperature"),
+            max_retries=kwargs.get("max_retries", 2),
+            max_tokens=kwargs.get("max_tokens"),
+        )
+    elif mode == "single_self_correct_blind":
+        reply, verification, attempts = run_single_self_correct_blind(
             problem,
             provider=kwargs.get("provider", "deepseek"),
             temperature=kwargs.get("temperature"),
