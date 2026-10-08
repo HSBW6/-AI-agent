@@ -1,6 +1,9 @@
-﻿.env
+.env
 .venv/
 .venv.bak-*/
 .tmp_for_tests/
 __pycache__/
 *.pyc
+
+# 讨论快照：崩溃恢复用的运行时产物，不该进仓库（* 覆盖原子写残留的 .tmp）
+discussion_snapshot.json*

@@ -12,10 +12,37 @@
 """
 import contextlib
 import io
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 
 import chat
+import snapshot
+
+# --- 快照隔离 ---------------------------------------------------------------
+# run_discussion 默认 resume=True，会读写项目根的 discussion_snapshot.json。
+# 测试里必须把它重定向到临时目录，否则：1) 测试往项目根写文件（污染工作区，
+# 真实运行残留的快照还会串进测试）；2) 用例之间互相读到对方留下的现场，
+# 91 项旧用例的结果会随机飘。
+_SNAPSHOT_TMPDIR = None
+_ORIGINAL_SNAPSHOT_FILE = None
+
+
+def setUpModule():
+    global _SNAPSHOT_TMPDIR, _ORIGINAL_SNAPSHOT_FILE
+    _SNAPSHOT_TMPDIR = tempfile.TemporaryDirectory(prefix="dsh_snapshot_test_")
+    _ORIGINAL_SNAPSHOT_FILE = snapshot.SNAPSHOT_FILE
+    snapshot.SNAPSHOT_FILE = Path(_SNAPSHOT_TMPDIR.name) / "discussion_snapshot.json"
+
+
+def tearDownModule():
+    global _SNAPSHOT_TMPDIR
+    if _ORIGINAL_SNAPSHOT_FILE is not None:
+        snapshot.SNAPSHOT_FILE = _ORIGINAL_SNAPSHOT_FILE
+    if _SNAPSHOT_TMPDIR is not None:
+        _SNAPSHOT_TMPDIR.cleanup()   # 临时目录连同测试写下的快照一起删掉
+        _SNAPSHOT_TMPDIR = None
 
 
 class FakeAgent:
@@ -56,6 +83,8 @@ def use_fake_agents(testcase, fail_names=(), reply_map=None):
     """
     original = chat.Agent
     FakeAgent.history = []   # 每个用例从干净历史开始
+    # 快照同理：不留上一个用例的现场（路径已被本模块 setUpModule 指向临时目录）
+    snapshot.clear_snapshot()
     reply_map = reply_map or {}
 
     def factory(name, provider="deepseek"):
@@ -363,6 +392,137 @@ class RunDiscussionVerificationTest(unittest.TestCase):
         self.assertIn("代码验证", out)
         self.assertIn("✓", out)
         self.assertIn("6/6", out)
+
+
+class SnapshotResumeTest(unittest.TestCase):
+    """崩溃恢复：快照存取 + 断点续聊 + 陈旧快照作废。
+
+    快照路径已由本模块 setUpModule 重定向到临时目录；每个用例再用 setUp
+    清一次现场，保证"上一次跑剩的快照"不会干扰下一次断言。
+    """
+
+    def setUp(self):
+        use_fake_agents(self)
+        snapshot.clear_snapshot()
+
+    def test_save_and_load_snapshot_roundtrip(self):
+        """保存 → 读取 → 字段完整一致；坏文件按"没有快照"处理并删除"""
+        participants = [("A", "deepseek"), ("B", "zhipu")]
+        self.assertTrue(snapshot.save_snapshot(
+            rnd=2, topic="题", participant_names=participants, max_rounds=5,
+            summary_text="第 1 轮摘要", recent_lines=["A：发言"],
+            saved_at="2026-10-07 12:00:00"))
+
+        self.assertEqual(snapshot.load_snapshot(), {
+            "version": snapshot.SNAPSHOT_VERSION,
+            "rnd": 2,
+            "topic": "题",
+            "participant_names": participants,   # 读回来仍是元组列表，可直接比较
+            "max_rounds": 5,
+            "summary_text": "第 1 轮摘要",
+            "recent_lines": ["A：发言"],
+            "saved_at": "2026-10-07 12:00:00",
+        })
+        # 原子写：落盘后不该留下 .tmp 残渣
+        leftovers = sorted(
+            p.name for p in
+            snapshot.SNAPSHOT_FILE.parent.glob("discussion_snapshot*"))
+        self.assertEqual(leftovers, [snapshot.SNAPSHOT_FILE.name])
+
+        # 损坏的快照 = 没有快照，且坏文件被删掉（免得每次启动都反复报错）
+        snapshot.SNAPSHOT_FILE.write_text("{ 这不是合法 JSON", encoding="utf-8")
+        self.assertIsNone(snapshot.load_snapshot())
+        self.assertFalse(snapshot.SNAPSHOT_FILE.exists())
+
+    def test_resume_from_snapshot(self):
+        """模拟"第 2 轮后中断"：重启后从第 3 轮接着聊，不重跑 1、2 轮"""
+        # 第一段：跑完第 2 轮（轮末检查点已落盘），第 3 轮刚开头就"进程消失"
+        stop_event = threading.Event()
+
+        def on_round_start(**kw):
+            if kw.get("rnd") == 3:
+                stop_event.set()
+
+        first = EventRecorder()
+        hooks = first.all_hooks()
+        hooks["on_round_start"] = on_round_start
+        self.assertIsNone(chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=5,
+            use_running_summary=True, verbose=False, hooks=hooks,
+            stop_event=stop_event))
+
+        snap = snapshot.load_snapshot()
+        self.assertIsNotNone(snap, "停止=暂停，快照必须留下，否则无从续聊")
+        self.assertEqual(snap["rnd"], 2)
+        self.assertEqual(snap["summary_text"], "我是记录员的发言")  # 第 2 轮末的滚动摘要
+        self.assertEqual(snap["recent_lines"], [])      # 压缩成功 → 原话已并入摘要
+
+        # 第二段：重启恢复（清历史，只观察恢复段到底跑了哪些轮）
+        FakeAgent.history = []
+        second = EventRecorder()
+        result = chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=5,
+            use_running_summary=True, verbose=False, hooks=second.all_hooks())
+
+        self.assertEqual(result, "我是总结者的发言")
+        rounds = [kw["rnd"] for t, kw in second.events if t == "on_round_start"]
+        self.assertEqual(rounds, [3, 4, 5])          # 1、2 轮没有被重跑
+        warns = [kw["message"] for t, kw in second.events if t == "on_warning"]
+        self.assertTrue(any("正在恢复" in m for m in warns), warns)  # GUI 也看得到提示
+        speaker_inputs = [t for n, t in FakeAgent.history if n in ("A", "B")]
+        self.assertTrue(speaker_inputs)
+        self.assertIn("我是记录员的发言", speaker_inputs[0])  # 断点接对了：摘要带回来了
+        # 正常总结收尾 → 清理快照：下次启动不再"恢复"一场已经结束的讨论
+        self.assertIsNone(snapshot.load_snapshot())
+
+    def test_stale_snapshot_discarded(self):
+        """快照的题目与本次不符 → 丢弃旧现场，从第 1 轮重新开始"""
+        snapshot.save_snapshot(
+            rnd=2, topic="上一道题",
+            participant_names=[("A", "deepseek"), ("B", "zhipu")],
+            max_rounds=5, summary_text="旧摘要", recent_lines=["A：旧发言"])
+
+        rec = EventRecorder()
+        result = chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=2,
+            use_running_summary=True, verbose=False, hooks=rec.all_hooks())
+
+        self.assertEqual(result, "我是总结者的发言")
+        rounds = [kw["rnd"] for t, kw in rec.events if t == "on_round_start"]
+        self.assertEqual(rounds, [1, 2])             # 没有从第 3 轮续上一道题
+        warns = [kw["message"] for t, kw in rec.events if t == "on_warning"]
+        self.assertTrue(any("不一致" in m for m in warns), warns)
+        # 关键：旧现场绝不能漏进新讨论的上下文
+        for _, text in FakeAgent.history:
+            self.assertNotIn("旧摘要", text)
+            self.assertNotIn("旧发言", text)
+
+    def test_resume_false_never_touches_snapshot(self):
+        """resume=False（批量实验）：既不恢复旧现场，也不写/清新快照
+
+        钉住 experiments/runner.py 的显式 resume=False——否则同一进程顺序跑几十道题时，
+        上一题的现场会被当成本题断点恢复，实验数据静默串题。
+        """
+        snapshot.save_snapshot(
+            rnd=2, topic="题", participant_names=PARTICIPANTS, max_rounds=5,
+            summary_text="旧摘要", recent_lines=["A：旧发言"])
+
+        rec = EventRecorder()
+        result = chat.run_discussion(
+            topic="题", participant_names=PARTICIPANTS, max_rounds=2,
+            use_running_summary=True, verbose=False, hooks=rec.all_hooks(),
+            resume=False)
+
+        self.assertEqual(result, "我是总结者的发言")
+        rounds = [kw["rnd"] for t, kw in rec.events if t == "on_round_start"]
+        self.assertEqual(rounds, [1, 2])           # 没有从第 3 轮续旧现场
+        for _, text in FakeAgent.history:          # 旧摘要没漏进上下文
+            self.assertNotIn("旧摘要", text)
+        # 磁盘上的旧快照原样保留：既没被清掉，也没被本次讨论覆盖成新现场
+        self.assertTrue(snapshot.SNAPSHOT_FILE.exists())
+        snap = snapshot.load_snapshot()
+        self.assertEqual(snap["rnd"], 2)
+        self.assertEqual(snap["summary_text"], "旧摘要")
 
 
 if __name__ == "__main__":

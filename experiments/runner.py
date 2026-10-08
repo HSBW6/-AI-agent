@@ -308,6 +308,10 @@ def run_debate(problem, providers=("deepseek", "zhipu"), rounds=3,
         verbose=False,
         verify_code=True,
         verify_suite=problem["suite_key"],
+        # 显式关掉崩溃恢复：这里是同一进程顺序跑几十上百道题的批量实验，
+        # 若沿用产品默认的 resume=True，上一题的现场会被当成本题断点恢复，
+        # 实验数据直接串题（对照实验要的是每题都从第 1 轮干净开跑）。
+        resume=False,
     )
     return summary, captured
 

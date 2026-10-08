@@ -155,11 +155,12 @@ DeepSeek：哼，这题不是有手就行？……
 ```
 agent.py          Agent 封装：人设 + 厂商适配 + 重试/退避/截断告警
 chat.py           讨论主循环、滚动摘要、预算分配、总结与评测触发（hooks 事件源）
+snapshot.py       讨论快照存取：崩溃恢复的检查点（原子写 + 陈旧快照判定）
 personas.py       人设词库（改人设只动这个文件）
 config.py         全局配置与 Key 校验（常量单一来源）
 evaluation.py     评测引擎：代码块提取 → 受限沙箱 → 用例断言 → 结果渲染
 gui.py            Tkinter GUI（后台线程 + queue + hooks，界面不阻塞）
-tests/            91 项离线单测（test_chat / test_evaluation / test_agent / test_gui）
+tests/            95 项离线单测（test_chat / test_evaluation / test_agent / test_gui）
 experiments/      对照实验层（与产品代码解耦，运行时注入套件）：
   runner.py           四配置执行器（单模型 / 自纠 / 同质讨论 / 异构讨论）
   report.py           统计报告（总览 / 难度分层 / 失败分类 / 配对对比）
@@ -194,8 +195,10 @@ experiments/      对照实验层（与产品代码解耦，运行时注入套�
 ## 测试
 
 ```bash
-python -m unittest discover -s tests      # 91 项，离线，约 3 秒
+python -m unittest discover -s tests      # 95 项，离线，约 3 秒
 ```
+
+**崩溃恢复（`resume=True`，默认开）**：`run_discussion` 每轮末把「已完成轮次 + 滚动摘要 + 最近对话」原子落盘到 `discussion_snapshot.json`（同目录 `.tmp` + `os.replace`，进程被杀不会留半截 JSON）。进程被杀/断电后重启即从断点续聊——已完成的轮不重跑；手动「停止」算暂停，快照保留，正常总结收尾才清理。题目或参与者名单与快照对不上时判为陈旧残留、直接丢弃，避免把上一题的现场喂给这一题。批量跑题的 `experiments/runner.py` 显式传 `resume=False`，防止跨题恢复污染对照实验。
 
 ---
 

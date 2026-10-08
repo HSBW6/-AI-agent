@@ -8,6 +8,12 @@ from evaluation import (
 )
 
 from agent import Agent
+from snapshot import (
+    clear_snapshot,
+    load_snapshot,
+    save_snapshot,
+    snapshot_matches,
+)
 
 # 默认题目（单一来源：chat.py 与 gui.py 共用，避免两份文案各自漂移）
 DEFAULT_TOPIC = (
@@ -49,6 +55,7 @@ def run_discussion(
     use_running_summary=True, summary_max_len=500,
     hooks=None, stop_event=None, verbose=True,
     verify_code=False, verify_suite=None,
+    resume=True,
 ):
     """让参与者围绕话题轮流发言，最后总结者收尾。
 
@@ -91,6 +98,15 @@ def run_discussion(
                           不传默认值的调用方因此不会再被迫落到 "two_sum"
                           （旧默认值曾导致"非两数之和题被 fake red"）；
                           新题目在 evaluation.py 扩展
+      resume               是否启用崩溃恢复（默认 True，CLI 与 GUI 都是开的）：
+                           True  = 开头探测快照：命中就用
+                                   「已完成轮次 rnd + 摘要 + 最近对话」接续主循环
+                                   （已完成的轮不重跑），每轮末落盘检查点，
+                                   正常总结收尾后清理快照；
+                                   快照与本次题目/参与者不一致 → 判为陈旧残留，
+                                   丢弃并重新开始（不把上一题现场喂给这一题）
+                           False = 完全不碰快照文件（批量跑题的实验场景用，
+                                   避免跨题恢复，见 experiments/runner.py）
     """
     # GUI 复用接口（见 docstring hooks）：事件回调 + 输出开关
     def _out(*args, **kwargs):
@@ -128,9 +144,34 @@ def run_discussion(
     # 话题锚点从第 2 轮起只存在于摘要开头（由 update_summary 指令强制保留）
     recent_lines = [opening_line]
 
+    # 3.5 崩溃恢复（resume）：开头探测上一次没跑完的现场。
+    #     断点 = 「已完成轮次 rnd」+「摘要/最近对话」——正好是主循环下一轮所需的
+    #     全部状态，所以接续时不需要重跑已完成的轮，直接从 start_round 继续。
+    start_round = 1
+    snap = load_snapshot() if resume else None
+    if snap is not None:
+        if not snapshot_matches(snap, topic, participant_names):
+            # 陈旧残留（上次换了题/换了阵容就没跑完）：宁可丢现场，也不能张冠李戴
+            _out("[警告] 发现与本次题目/参与者不一致的旧快照，已丢弃，按新讨论开始")
+            _emit("on_warning",
+                  message="发现与本次题目/参与者不一致的旧快照，已丢弃并重新开始")
+            clear_snapshot()
+        else:
+            start_round = snap["rnd"] + 1
+            summary_text = snap["summary_text"]
+            recent_lines = list(snap["recent_lines"])
+            if not summary_text and not recent_lines:
+                recent_lines = [opening_line]   # 兜底：喂给模型的上下文不能是空的
+            notice = f"检测到未完成讨论（第 {snap['rnd']} 轮），正在恢复…"
+            _out(f"[恢复] {notice}")
+            # 走已注册的 on_warning 通道：GUI 场景 verbose=False，光打印它看不到
+            _emit("on_warning", message=notice)
+
     # 4. 主循环：每轮每人发言一次（GUI 场景可通过 stop_event 在检查点停止）
+    #    start_round-1 轮已经完成（快照恢复场景），range 自动跳过；
+    #    若快照显示轮次已跑满（start_round > max_rounds），则直接进总结收尾。
     stopped = False
-    for rnd in range(1, max_rounds + 1):
+    for rnd in range(start_round, max_rounds + 1):
         if stop_event is not None and stop_event.is_set():
             stopped = True
             break
@@ -206,6 +247,13 @@ def run_discussion(
             else:
                 _emit("on_warning", message=f"第 {rnd} 轮滚动摘要更新失败，沿用旧摘要")
 
+        # 4.3 检查点：本轮（含刚更新完的摘要）落盘，下一轮中途崩了就能从这续。
+        #     刻意放在摘要更新之后：恢复时读到的就是"摘要已含本轮、recent_lines 已
+        #     清空"的一致状态，不会出现同一轮被重复压进摘要或同一句被重复发言。
+        if resume:
+            save_snapshot(rnd, topic, participant_names, max_rounds,
+                          summary_text, recent_lines)
+
     if stopped:
         _out("\n[已停止] 讨论已被手动停止")
         return None
@@ -229,6 +277,10 @@ def run_discussion(
         summary = "（总结失败，请查看上方警告信息）"
     _out(f"总结者：{summary}")
     _emit("on_finish", summary=summary)
+    # 4.4 正常收尾：已经有最终总结了，现场没有续聊价值，清掉快照。
+    #     停止/异常路径刻意不清（那是"暂停"不是"放弃"）：下次启动还能接着聊。
+    if resume:
+        clear_snapshot()
 
     # 6. 评测闭环：总结者输出的代码不再"自嗨"：
     #    解析 ```python 代码块 → 受限沙箱子进程执行 → 跑题目用例断言 →
