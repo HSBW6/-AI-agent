@@ -7,60 +7,73 @@
 
 ---
 
-## 实验结果：多智能体讨论到底值不值？
+## 实验结果：我修了一个裁判 bug，然后把结论推翻了
 
-**结论：在这个任务上，「独立重做一遍」就是最优策略——比任何形式的「多模型讨论」都好，而且不需要告诉模型错在哪。**
+### 我原来的结论
 
-30 道算法题（easy / medium / hard = 9 / 12 / 9）× 7 种配置，共 210 次运行；
-代码由**沙箱真实跑测试用例判分**——通过率是客观的，不是人工打分：
+30 道算法题（easy / medium / hard = 9 / 12 / 9）× 7 种配置，共 210 次运行，代码由沙箱真实跑用例判分。当时测出：
 
-| 配置 | 通过率 | 平均耗时 | 总调用 | 类别 |
-|---|---|---|---|---|
-| **单模型自纠**（失败 → 错误详情回喂 → 重答） | **100% (30/30)** | **2.3s** | 33 | 独立重试 |
-| **单模型盲重试**（只说"错了"，不给任何细节） | **100% (30/30)** | **2.3s** | 32 | 独立重试 |
-| 异构讨论（DeepSeek + GLM） | 96.7% (29/30) | 92.9s | 30 | 讨论 |
-| 单模型直答（基线） | 93.3% (28/30) | 2.2s | 30 | 基线 |
-| 讨论·不综合（手搓对照） | 93.3% (28/30) | 12.5s | 30 | 讨论 |
-| 讨论·要求综合（手搓对照） | 90.0% (27/30) | 13.6s | 30 | 讨论 |
-| 同质讨论（产品路径，DeepSeek × 2） | 86.7% (26/30) | 15.3s | 30 | 讨论 |
-
-**四个发现**
-
-1. **"重试一次"就够了**：自纠把通过率从 93.3% → **100%**，耗时几乎不变（2.2s → 2.3s）；30 题里只有 3 题需要重试，全部修对。
-   **但我专门做了对照实验来验证"是不是因为给了具体错误"——答案是：不是。**
-   盲重试（只告诉模型"你没通过、重做"，**不给任何失败细节**）同样拿到 **100%**，总调用 32 次 vs 自纠 33 次，配对对比 30 题结果**完全一致**。
-   → **有效的是「独立重新生成」这个动作本身，不是反馈的信息量。** 这条推翻了我最初的假设。
-2. **所有"讨论类"配置都追不上它**：86.7% ~ 96.7%，**无一达到 100%**。异构讨论最接近（96.7%），代价是**慢 42 倍**（92.9s vs 2.3s）。
-   同质讨论最低（86.7%），但配对差异只有 2 题，且都是**函数名不匹配**（`roman_to_int`、`is_power_of_three`）——改名后 5/5 全过，算法本身正确。按算法口径，同质讨论与单模型直答同为 28/30，**没有证据表明讨论损害算法正确性**；差异只在接口对齐，因此不能拿它去复现 [*The Cost of Consensus*](https://dl.acm.org/doi/full/10.1145/3786335.3813137)（ACM）的结论。
-3. **调总结指令救不了讨论**：我手搓了一对**唯一差别只在总结指令**的干净对照——要求"综合双方观点"是 90.0%，改成"忽略分歧、直接给答案"是 93.3%，**只差 1 题、不显著**。
-   → 问题不在"综合观点"这一步，而在讨论范式本身。
-4. **讨论没有难度收益**：同质讨论 easy 7/9 的 2 个失败同样是函数名不匹配（改名后全过），hard 无提升；而独立重试把 hard 从 7/9 拉到 9/9。
-
-**两次假设修正（这部分比结论本身更能说明方法）**
-
-| 我最初的假设 | 怎么验证的 | 结果 |
+| 配置 | 通过率 | 平均耗时 |
 |---|---|---|
-| 自纠有效是因为"**真值反馈**" | 加盲重试对照（唯一差别 = 有无失败细节） | ❌ **被推翻**：不给细节也 100% |
-| 讨论变差是因为"**综合双方观点**" | 手搓 synth / direct 对照（唯一差别 = 总结指令） | ⚠️ **仅微弱支持**：只值 1 题、不显著 |
+| 单模型直答 | 93.3% (28/30) | 2.2s |
+| 单模型自纠 | 100% (30/30) | 2.3s |
+| 单模型盲重试 | 100% (30/30) | 2.3s |
+| 同质讨论 | 86.7% (26/30) | 15.3s |
+| 异构讨论 | 96.7% (29/30) | 92.9s |
 
-**最终结论（比最初假设更保守、也更可靠）**：
-> **「独立重新生成」是这个任务上的最优策略**——答错就重试一次，100% 通过、成本几乎不变、**甚至不需要诊断信息**。
-> **而"多模型讨论"整体追不上它**：不管怎么调总结指令，都到不了 100%。
+据此我写了四个“发现”：重试有效、同质讨论有害、讨论在简单题上倒退、异构贵但略好。
 
-**一个必须说清的归因陷阱**：`同质讨论(86.7%)` 与 `讨论·要求综合(90.0%)` 摆在一起，看着像能证明"综合有害"——但前者走**产品路径**（含滚动摘要，总结指令写在 `chat.py` 里），**两者不是干净对照**，那 3.3 个点里混着实现差异，不能归给"综合"。只有手搓的那一对（synth vs direct）才是干净对照，而它只差 1 题。
+### 问题出在裁判，不在模型
 
-**局限（请勿过度解读）**：30 题样本、配对差异仅 2 题，方向明确但统计功效弱；`temperature=0.8`、单次运行、未做重复实验；结论仅适用于算法解题类任务。
+复盘原始数据时发现，单模型直答的 2 个失败全是沙箱的假失败：
 
-**复现方式**
+- `sliding_window_maximum`：代码里 `from collections import deque`，沙箱没有 `__import__`，5 个用例全部 `ImportError`，**一条断言都没跑**；
+- `binary_tree_max_path_sum`：`from typing import List`，同样在 exec 阶段就 `ImportError`。
+
+也就是说，93.3% 这个数字里有 2 题根本不是“模型做错了”，而是“裁判不认识标准库 import”。
+
+### 修复后重跑（v2 批次）
+
+修复：沙箱放行纯计算标准库的受限 import（`typing` / `collections` / `math` / `heapq` / `bisect` / `itertools` / `functools` / `re` 等），`os` / `subprocess` 等仍拒绝。然后重跑 4 个配置：
+
+| 配置 | 通过率 | 平均耗时 | 解题尝试 |
+|---|---|---|---|
+| 单模型直答 | **100% (30/30)** | 2.0s | 30 |
+| 单模型自纠 | **100% (30/30)** | 2.1s | 31 |
+| 单模型盲重试 | **100% (30/30)** | 2.0s | 30 |
+| 同质讨论 | 93.3% (28/30) | 15.7s | 30 |
+
+> “解题尝试”只统计解答次数。讨论配置每题实际约 9 次 API 调用（3 轮 × 2 角色 + 2 次摘要 + 1 次总结，共 30 题），成本不是同一量级。
+
+### 结论修正（三个都不成立了）
+
+1. **“重试提升 6.7 个点”不成立**：修复后单模型直答就是 30/30，自纠也是 30/30，提升 **0 点**。那 6.7 个点是裁判 bug，不是模型能力。
+2. **“同质讨论倒退 −2 题”不成立**：v2 里同质讨论 28/30，只差单模型 2 题；失败的 2 题是 `binary_tree_max_path_sum`（算法真错）和 `majority_element`（总结者没输出代码块），不是“讨论把算法讲坏了”。
+3. **“讨论在简单题上倒退”不成立**：easy 的失败是函数名不匹配（`roman_to_int`、`is_power_of_three`），改名后 5/5 全过。
+
+**现在能说的只剩一句**：在这个 30 题样本上，讨论类配置没有达到 100%，但差异只有 2 题，且失败类型是“算法错 + 格式错”，不足以下“讨论有害”的因果结论。
+
+### 这件事本身比结论更有价值
+
+- **裁判 bug 会伪装成能力差异**：一个 `__import__` 的缺失，就能让 93.3% 看起来像模型水平。评测闭环如果不被审计，它给出的“客观数字”一样会骗人。
+- **30 题单次运行撑不起因果结论**：`temperature=0.8`、每题只跑一次、配对差异 2 题。要区分“配置差异”和“运行噪声”，需要每题重复 N 次。
+- 所以这批数据我降级为 **pilot study**，不再声称“多智能体讨论有害”。
+
+这已经是第三次自我推翻了：盲重试对照推翻了“真值反馈”假设，synth/direct 对照说明“综合观点”最多值 1 题，加上这次的裁判 bug。前两批数据（含 synth/direct）都是 v1 批次、未重跑。
+
+### 历史数据（v1 批次，保留但不要引用）
+
+`experiments/results/groupB.jsonl` 是修复前的 210 条原始记录，7 配置齐全。它包含已知的裁判 bug（import 假失败），**不能与 v2 数据混比**，保留是为了复现“结论是怎么被推翻的”。
+
+### 复现
 
 ```bash
-# 七个配置写入同一文件（才能做配对对比）
-for m in single single_self_correct single_self_correct_blind \
-         homogeneous heterogeneous debate_synth debate_direct; do
-  python experiments/runner.py --mode $m --provider deepseek --limit 30 --rounds 3 --out experiments/results/r.jsonl
+# v2 批次：修复沙箱 import 后重跑 4 个配置
+for m in single single_self_correct single_self_correct_blind homogeneous; do
+  python experiments/runner.py --mode $m --provider deepseek --limit 30 \
+    --out experiments/results/groupB_v2.jsonl
 done
-# 干净对照：只改总结指令，差异有多大？
-python experiments/report.py experiments/results/r.jsonl --baseline debate_synth --target debate_direct
+python experiments/report.py experiments/results/groupB_v2.jsonl
 ```
 
 ---
@@ -82,10 +95,10 @@ python experiments/report.py experiments/results/r.jsonl --baseline debate_synth
 
 ## 亮点
 
-- **带对照实验的工程结论，而不是"我做了个多智能体"**：用 30 道题 × 7 种配置，在沙箱客观判分下测出"这个任务上讨论不如自纠"（见上方实验结果）。实验层（`runner.py` / `report.py` / `selfcheck_engine.py`）可复现、可扩展，且**没有改动产品代码一行**。
+- **带对照实验的工程结论，而且敢推翻自己**：30 道题 × 7 种配置、沙箱真实判分，先测出"讨论不如自纠"，又发现评测沙箱把标准库 `import` 判成算法错误——修掉裁判 bug 后重跑，原来的结论全部不成立（见上方实验结果）。实验层（`runner.py` / `report.py` / `selfcheck_engine.py`）可复现、可扩展，且**没有改动产品代码一行**。
 - **异构多模型协作**：同一场讨论里接两家厂商（DeepSeek + 智谱 GLM），`Agent` 层抹平差异——智谱是"混合思考"模型，已按实测结论显式关闭思考（`extra_body={"thinking": {"type": "disabled"}}`），否则思考 token 会吃光预算导致**空回复**。
 - **滚动摘要控制上下文成本**：每轮结束把"旧摘要 + 本轮发言"压成一条新摘要（末轮不压），上下文不随轮数线性膨胀；摘要超长时也会给原始发言留足预算。
-- **评测闭环，让代码不再自嗨**：解析总结里的 ` ```python ` 代码块 → 受限命名空间 `exec` → 独立子进程执行 → 逐用例断言。结果分 `pass / fail / no_code / error / timeout / skipped` 六态。
+- **评测闭环，让代码不再自嗨**：解析总结里的 ` ```python ` 代码块 → 受限命名空间 `exec` → 独立子进程执行 → 逐用例断言。沙箱放行纯计算标准库的受限 import（`typing` / `collections` / `math` 等），`os` / `subprocess` 仍拒绝。结果分 `pass / fail / no_code / error / timeout / skipped` 六态。
 - **不假红的取舍**：题目→用例套件是**启发式识别**，识别不了就 `skipped`（中性灰），绝不硬套一个套件把好代码判成 ✗；同一题族的语义变体（如「两数之和 II」要求 1-based 下标）也会主动跳过。
 - **95 项离线单测**：用 `FakeAgent` 顶替真模型，**不联网、不读 Key、不花额度**，实测约 3 秒跑完（测试文件里其余用例走真实子进程，唯 taskkill 失败路径用 mock 定向替身——那条路径在普通机器上无法稳定构造）。
 - **一堆踩坑修出来的工程细节**：客户端复用（keep-alive）、可中断退避（点停止立刻响应）、重试分级（4xx 不重试 / 429 读 `Retry-After`）、截断告警、超时**进程树**击杀、沙箱子进程只给最小环境变量。
@@ -119,12 +132,13 @@ CLI 默认讨论 3 轮，GUI 默认 5 轮（1~10 可选）；GUI 还能选「代
 **跑对照实验**（`experiments/` 是独立实验层，通过运行时注入套件工作，不改产品代码一行）：
 
 ```bash
-python experiments/runner.py --mode single              --provider deepseek --limit 30 --out experiments/results/r.jsonl
-python experiments/runner.py --mode single_self_correct --provider deepseek --limit 30 --out experiments/results/r.jsonl
-python experiments/runner.py --mode homogeneous         --provider deepseek --limit 30 --out experiments/results/r.jsonl
-python experiments/runner.py --mode heterogeneous       --limit 30 --rounds 3 --delay 15 --out experiments/results/r.jsonl
-python experiments/report.py experiments/results/r.jsonl    # 出统计表（含配对对比）
-python experiments/selfcheck_engine.py                      # 集成自检：30 题参考实现过真实评测链路（不花钱）
+# v2 批次（修复沙箱 import 后）：4 个配置
+python experiments/runner.py --mode single                    --provider deepseek --limit 30 --out experiments/results/groupB_v2.jsonl
+python experiments/runner.py --mode single_self_correct       --provider deepseek --limit 30 --out experiments/results/groupB_v2.jsonl
+python experiments/runner.py --mode single_self_correct_blind --provider deepseek --limit 30 --out experiments/results/groupB_v2.jsonl
+python experiments/runner.py --mode homogeneous               --provider deepseek --limit 30 --out experiments/results/groupB_v2.jsonl
+python experiments/report.py experiments/results/groupB_v2.jsonl    # 出统计表（含配对对比）
+python experiments/selfcheck_engine.py                              # 集成自检：30 题参考实现过真实评测链路（不花钱）
 ```
 
 输出格式示意（实际发言由模型生成）：
@@ -162,7 +176,7 @@ evaluation.py     评测引擎：代码块提取 → 受限沙箱 → 用例断�
 gui.py            Tkinter GUI（后台线程 + queue + hooks，界面不阻塞）
 tests/            95 项离线单测（test_chat / test_evaluation / test_agent / test_gui）
 experiments/      对照实验层（与产品代码解耦，运行时注入套件）：
-  runner.py           四配置执行器（单模型 / 自纠 / 同质讨论 / 异构讨论）
+  runner.py           七配置执行器（单模型 / 自纠 / 盲重试 / 同质讨论 / 异构讨论 / synth / direct）
   report.py           统计报告（总览 / 难度分层 / 失败分类 / 配对对比）
   selfcheck_engine.py 集成自检：参考实现过真实评测链路（不花钱）
   validate_dataset.py 数据集验收器（格式 + 沙箱跑通 + 期望值自洽）
@@ -204,7 +218,7 @@ python -m unittest discover -s tests      # 95 项，离线，约 3 秒
 
 ## 设计取舍（想了解"为什么这么写"可以看）
 
-- **沙箱是"防意外破坏"级，不是强安全沙箱**：受限 builtins（72 项白名单）+ 独立子进程 + 15s 超时 + 进程树击杀 + 最小环境变量。**请勿用它执行不可信的高危代码**。
+- **沙箱是"防意外破坏"级，不是强安全沙箱**：受限 builtins（白名单 + 受限 import：只放行 `typing` / `collections` / `math` 等纯计算标准库，`os` / `subprocess` 拒绝）+ 独立子进程 + 15s 超时 + 进程树击杀 + 最小环境变量。**请勿用它执行不可信的高危代码**。
 - **性能门槛按本机标定取几何中点**：`time_limit` 比较的是单例内部耗时，太贴近"低效解的真实耗时"会只剩约 10% 余量、判定随机器负载翻转（实测同一份代码既被判 fail 又被判 pass）。
 - **规模越小越稳**：限时是事后判定、无法中途打断被测函数，所以规模越大跑得越久、沙箱压力越大（12000 规模时实测约 8% 概率触发子进程异常）。
 - **宁可 skipped，不要假红**：识别不确定时跳过验证，比给用户一个错误的 ✗ 更有价值。
@@ -212,6 +226,7 @@ python -m unittest discover -s tests      # 95 项，离线，约 3 秒
 ## 已知限制
 
 - **主程序内置套件只有「两数之和」**：`chat.py` / GUI 的自动识别拿不准时会走 `skipped`；实验层（`experiments/`）另有 **30 题题库**，通过运行时注入 `TEST_SUITES` 使用（见上方「实验结果」），**不改产品代码**。
+- **实验是 pilot study**：30 题、每题单次运行、`temperature=0.8`；v2 只重跑了 4 个配置，异构 / synth / direct 仍是 v1 批次（含裁判 bug），不可混比。要下因果结论需每题重复 N 次。
 - 题目→套件是关键词启发式识别；`1. Two Sum`、`两数之和`、`Two Sum` 等常见写法都能认出，但会被「两数之和 II」这类语义变体主动排除。
 - 讨论质量依赖人设提示词与模型本身。**实测免费档（智谱）存在账号级速率限制**：连续调用会返回 `429 / code 1302`，单题耗时从 2s 恶化到 46s（退避重试堆积），`debate` 模式因此必须限速或改用付费档（见 `experiments/runner.py --delay`）。
 

@@ -216,6 +216,38 @@ class RunVerificationTest(unittest.TestCase):
         self.assertIn("open", r.error)
         self.assertIn("NameError", r.error)
 
+    def test_standard_library_import_allowed(self):
+        # from typing / from collections 是算法题常见写法，不应被整份判负
+        code = wrapped("""
+            from typing import List
+            from collections import deque
+
+            def two_sum(nums: List[int], target: int) -> List[int]:
+                seen = {}
+                for i, n in enumerate(nums):
+                    if target - n in seen:
+                        return [seen[target - n], i]
+                    seen[n] = i
+                return []
+
+            def _unused(q: deque):
+                return q
+        """)
+        r = ev.run_code_verification(code)
+        self.assertTrue(r.passed, r.error)
+
+    def test_dangerous_import_blocked(self):
+        # 白名单外的模块（os/subprocess 等）必须被拒绝
+        code = wrapped("""
+            import os
+            def two_sum(nums, target):
+                return [0, 1]
+        """)
+        r = ev.run_code_verification(code)
+        self.assertFalse(r.passed)
+        self.assertEqual(r.status, "error")
+        self.assertIn("沙箱不允许导入", r.error or "")
+
     def test_timeout_kills_infinite_loop(self):
         code = wrapped("""
             def two_sum(nums, target):

@@ -394,6 +394,31 @@ def _main():
             safe[_n] = getattr(_b, _n)
         except AttributeError:
             pass
+
+    # 受限 import：算法题里 `from typing import List`、`from collections import deque`
+    # 是正常写法，但旧版沙箱没有 __import__，这类代码会被整份判负（假失败）。
+    # 这里只放行纯计算标准库；预加载后按名返回，不把真实 import 机制交给被测代码。
+    _SAFE_MODULES = {}
+    for _m in ("typing", "collections", "math", "heapq", "bisect",
+               "itertools", "functools", "re", "string", "operator",
+               "copy", "decimal"):
+        try:
+            _SAFE_MODULES[_m] = _b.__import__(_m)
+        except Exception:
+            pass
+
+    def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level != 0:
+            raise ImportError("沙箱不允许相对导入")
+        _root = name.split(".")[0]
+        if _root not in _SAFE_MODULES:
+            raise ImportError(
+                "沙箱不允许导入 %s（只允许：%s）"
+                % (name, ", ".join(sorted(_SAFE_MODULES)))
+            )
+        return _SAFE_MODULES[_root]
+
+    safe["__import__"] = _safe_import
     ns = {"__builtins__": safe, "__name__": "__sandbox__"}
 
     # 1) exec 用户代码（编译错误/顶层 NameError 在此被捕获）
